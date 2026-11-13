@@ -1,6 +1,7 @@
 import { promises as fs, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BgMatch, Build, Settings } from '../shared/types'
+import type { Placement } from './overlayLayout'
 
 /** The build answer for one game, so a tracker restart mid-game keeps it. */
 export interface BuildChoice {
@@ -51,6 +52,8 @@ export class Store {
   private boundsFile: JsonFile<Record<string, Electron.Rectangle>>
   private buildsFile: JsonFile<Build[]>
   private choiceFile: JsonFile<BuildChoice>
+  /** Where each overlay sits relative to the game window; see overlayLayout.ts. */
+  private placesFile: JsonFile<Record<string, Placement>>
 
   constructor(dir: string) {
     this.matchesFile = new JsonFile(join(dir, 'bg-matches.json'), [])
@@ -58,6 +61,7 @@ export class Store {
     this.boundsFile = new JsonFile(join(dir, 'windows.json'), {})
     this.buildsFile = new JsonFile(join(dir, 'builds.json'), [])
     this.choiceFile = new JsonFile(join(dir, 'build-choice.json'), { game: '', answered: false })
+    this.placesFile = new JsonFile(join(dir, 'overlay-places.json'), {})
     const s = this.settingsFile.value
     this.settingsFile.value = { ...DEFAULT_SETTINGS, ...s, overlay: { ...DEFAULT_SETTINGS.overlay, ...s.overlay } }
   }
@@ -116,12 +120,21 @@ export class Store {
     return this.boundsFile.value[name]
   }
 
+  getPlacement(name: string): Placement | undefined {
+    return this.placesFile.value[name]
+  }
+
+  setPlacement(name: string, p: Placement) {
+    this.placesFile.value[name] = p
+    this.placesFile.save()
+  }
+
   setBounds(name: string, b: Electron.Rectangle) {
     this.boundsFile.value[name] = b
     this.boundsFile.save()
   }
 
   async flushAll() {
-    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile, this.buildsFile, this.choiceFile].map((f) => f.flush()))
+    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile, this.buildsFile, this.choiceFile, this.placesFile].map((f) => f.flush()))
   }
 }

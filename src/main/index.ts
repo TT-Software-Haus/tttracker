@@ -5,6 +5,7 @@ import { Tracker } from './tracker'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { initCapture } from './vision/stream'
+import { DEFAULT_PLACEMENTS, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
@@ -29,11 +30,8 @@ function loadPage(win: BrowserWindow, page: 'index' | 'overlay', query = '') {
   else win.loadFile(join(__dirname, `../renderer/${page}.html`), { search: query.replace(/^\?/, '') })
 }
 
-/** Windows we're resizing ourselves, so their temporary size isn't persisted. */
-const resizingOurselves = new Set<string>()
-
 function rememberBounds(win: BrowserWindow, name: string) {
-  const save = () => !win.isDestroyed() && !resizingOurselves.has(name) && store.setBounds(name, win.getBounds())
+  const save = () => !win.isDestroyed() && store.setBounds(name, win.getBounds())
   win.on('moved', save)
   win.on('resized', save)
 }
@@ -65,19 +63,53 @@ function createMainWindow() {
   })
 }
 
+// ------------------------------------------------------------ overlay layout
+//
+// The odds, lobby and build overlays sit inside the game window and follow it
+// (overlayLayout.ts has the maths). The anchor is the game's client area, or
+// the screen's work area when there's no game window to sit in.
+
+const KINDS = ['odds', 'lobby', 'build'] as const
+let anchor: Rect | undefined
+/** The bounds this code last gave each overlay, so its own moves aren't saved as drags. */
+const placedAt: Partial<Record<OverlayKind, Rect>> = {}
+/** Builds listed in the prompt, which shares the odds window and grows it. */
+let promptRows = 0
+// Header, one row per build, and the card's own padding.
+const promptExtra = () => (promptRows ? 56 + promptRows * 46 : 0)
+
+function placementFor(kind: OverlayKind): Placement {
+  const p = store.getPlacement(kind) ?? DEFAULT_PLACEMENTS[kind]
+  return kind === 'odds' ? { ...p, height: p.height + promptExtra() } : p
+}
+
+function layoutOverlays() {
+  if (!anchor) return
+  for (const kind of KINDS) {
+    const win = overlays[kind]
+    if (!win || win.isDestroyed()) continue
+    const b = place(placementFor(kind), anchor, 1)
+    placedAt[kind] = b
+    if (!sameRect(b, win.getBounds(), 0)) win.setBounds(b)
+  }
+}
+
+/** A move or resize this code didn't make is the user's: remember it relative to the game. */
+function onOverlayMoved(kind: OverlayKind) {
+  const win = overlays[kind]
+  if (!win || win.isDestroyed() || !anchor) return
+  const b = win.getBounds()
+  if (sameRect(b, placedAt[kind])) return
+  const p = placementOf(b, anchor, 1)
+  store.setPlacement(kind, kind === 'odds' ? { ...p, height: p.height - promptExtra() } : p)
+  placedAt[kind] = b
+}
+
 function createOverlay(kind: OverlayKind) {
-  const saved = store.getBounds(`overlay-${kind}`)
-  const area = screen.getPrimaryDisplay().workArea
-  const defaults =
-    kind === 'odds'
-      ? { width: 440, height: 170, x: area.x + Math.round(area.width / 2 - 220), y: area.y + 8 }
-      : kind === 'build'
-        ? // Right-hand side, opposite the lobby list.
-          { width: 240, height: Math.min(520, area.height - 180), x: area.x + area.width - 256, y: area.y + 90 }
-        : { width: 290, height: Math.min(720, area.height - 140), x: area.x + 16, y: area.y + 90 }
+  anchor ??= screen.getPrimaryDisplay().workArea
+  const b = place(placementFor(kind), anchor, 1)
   const win = new BrowserWindow({
-    ...defaults,
-    ...(saved ?? {}),
+    ...b,
     frame: false,
     transparent: true,
     resizable: true,
@@ -87,11 +119,44 @@ function createOverlay(kind: OverlayKind) {
     show: false,
     webPreferences: { preload, contextIsolation: true, sandbox: false },
   })
+  placedAt[kind] = b
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true)
-  rememberBounds(win, `overlay-${kind}`)
+  win.on('moved', () => onOverlayMoved(kind))
+  win.on('resized', () => onOverlayMoved(kind))
   loadPage(win, 'overlay', `?kind=${kind}`)
   overlays[kind] = win
+}
+
+/**
+ * Follow the game window: the overlays and the highlight layer both. Moving or
+ * resizing it writes nothing to the log, so it's polled, only while something
+ * is showing. 50ms rather than 500: at half a second the overlays visibly
+ * lagged behind a dragged window (seen live), and a look costs a microsecond
+ * (gameWindow.ts), so the only real work is the setBounds when it has moved.
+ */
+const FOLLOW_MS = 50
+function followGameWindow() {
+  setInterval(async () => {
+    const boxes = highlightWin && !highlightWin.isDestroyed() && highlightWin.isVisible()
+    if (!boxes && !KINDS.some((k) => overlays[k]?.isVisible())) return
+    const g = await getGameWindowRect()
+    // Without this the boxes stayed where the window used to be (seen live):
+    // the highlight layer was only moved when the log changed.
+    if (boxes && g) fitHighlightWindow(g)
+    const a = g ? { x: g.x, y: g.y, width: g.width, height: g.height } : screen.getPrimaryDisplay().workArea
+    if (sameRect(a, anchor, 0)) return
+    anchor = a
+    layoutOverlays()
+  }, FOLLOW_MS)
+}
+
+/** Size the highlight layer to the game's client area, which the boxes are drawn in. */
+function fitHighlightWindow(rect: Rect) {
+  const win = highlightWin
+  if (!win || win.isDestroyed()) return
+  const r = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+  if (!sameRect(r, win.getBounds(), 0)) win.setBounds(r)
 }
 
 function createHighlightWindow() {
@@ -144,42 +209,10 @@ async function updateHighlightWindow(snap: BgSnapshot) {
   }
   const rect = await getGameWindowRect()
   if (!rect) return
-  const b = win.getBounds()
-  if (b.x !== rect.x || b.y !== rect.y || b.width !== rect.width || b.height !== rect.height) win.setBounds(rect)
+  fitHighlightWindow(rect)
   if (!win.isVisible()) win.showInactive()
 }
 
-
-/**
- * Make room for the build prompt in the odds window.
- *
- * Both cards live in that one window, which defaults to 170px tall — enough
- * for the odds alone. With a prompt above them the odds card is pushed almost
- * entirely out of view, and a lobby matching several builds pushes the prompt's
- * own lower options out too, where they can't be clicked.
- *
- * So the window grows while a prompt is up and goes back to the size the user
- * chose once it's answered. The saved bounds are left alone throughout —
- * this is our resize, not theirs.
- */
-function growOddsForPrompt(count: number) {
-  const win = overlays.odds
-  if (!win || win.isDestroyed()) return
-  const saved = store.getBounds('overlay-odds')
-  const base = saved?.height ?? 170
-  if (!count) {
-    if (!resizingOurselves.has('overlay-odds')) return
-    resizingOurselves.delete('overlay-odds')
-    const b = win.getBounds()
-    win.setBounds({ ...b, height: base })
-    return
-  }
-  // Header, one row per build, and the card's own padding.
-  const wanted = Math.min(base + 56 + count * 46, screen.getPrimaryDisplay().workArea.height - 40)
-  if (win.getBounds().height >= wanted) return
-  resizingOurselves.add('overlay-odds')
-  win.setBounds({ ...win.getBounds(), height: wanted })
-}
 
 function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   const o = store.settings.overlay
@@ -188,7 +221,12 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   // window stops being click-through for as long as it's up — and goes back to
   // whatever lock setting was in force the moment it's answered.
   const prompting = !!snap.buildPrompt?.length
-  growOddsForPrompt(snap.buildPrompt?.length ?? 0)
+  // The prompt grows the odds window while it's up, so it doesn't push the
+  // odds card out of view; the layout shrinks it back once it's answered.
+  if ((snap.buildPrompt?.length ?? 0) !== promptRows) {
+    promptRows = snap.buildPrompt?.length ?? 0
+    layoutOverlays()
+  }
   for (const kind of ['odds', 'lobby', 'build'] as const) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
@@ -295,6 +333,7 @@ app.whenReady().then(async () => {
   createOverlay('build')
   createHighlightWindow()
   createCaptureWindow()
+  followGameWindow()
   await tracker.start()
   broadcast('data:changed')
   updateOverlays()
