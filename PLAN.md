@@ -205,5 +205,74 @@ the boxes land on the right minions.
 
 - None blocking. M5 has a spike that could change its approach; I report what I
   find rather than re-ask.
-- None blocking. M5 has a spike that could change its approach; I report what I
-  find rather than re-ask.
+
+---
+
+# Follow-up — picking a build from the overlays, and minion detail on hover
+
+Asked for 2026-11-13: a way back to a build from the overlays after "Not this
+game", a way to switch builds from the build sidebar, and tier/tribe/card text on
+hover in the build sidebar. Today the only way to change your mind mid-game is
+the Live page selector in the main window, which means alt-tabbing out of the game.
+
+## Decisions taken
+
+- **"Pick a build"** goes on the **lobby overlay** (left). It shows once the hero
+  is locked in and no build is being followed: after "Not this game", or when no
+  build matched the lobby so the prompt never appeared. It doesn't show while the
+  prompt is still up.
+- **"Change"** goes on the **build sidebar** (right), next to the build name.
+- Either button turns *that* overlay into a list of all builds, this lobby's
+  tribes first (same grouping as the Live page's `BuildBar`), plus Cancel. Picking
+  one calls `selectBuild(id)`. The list opens in the overlay whose button you
+  pressed, so there's no cross-window state.
+- **Clickable only while hovered.** Locked overlays stay click-through. Mouse
+  moves are already forwarded (`forward: true`), so the renderer reports when the
+  pointer enters or leaves an interactive element (`overlay:interactive` IPC), and
+  main makes *that* window take clicks only while the pointer is there. Clicks on
+  the game under the rest of the overlay still go through.
+- **Hover detail** in the build sidebar is a floating tooltip with tier, tribe(s)
+  and card text, taken from `usePool()`'s `CardInfo`. It's drawn over the rows (or
+  above them near the bottom) so the list never shifts.
+
+## Milestones
+
+### M7 — Hover-to-click plumbing, and "Change" on the build sidebar ✅ done
+
+`overlay:interactive` IPC + `window.api.setInteractive(on)`. Main keeps a set of
+windows currently hovered and folds it into `updateOverlays()`'s `clickable`,
+because that runs on every snapshot and would otherwise reset it. The renderer
+also clears the flag whenever the element under the pointer unmounts (picking a
+build closes the list, and no `mouseleave` fires). The `BuildPicker` component
+(list + Cancel) and the "Change" button go in the build sidebar.
+
+**Verify:** typecheck + tests. Playwright with a stubbed `window.api`: the button
+opens the list, picking calls `selectBuild`, and `setInteractive` is called true on
+enter and false on leave or close. Real overlay click-through gets checked in your
+next game.
+
+### M8 — "Pick a build" on the lobby overlay
+
+The snapshot gains `heroPicked: boolean` (a log fact the Tracker already holds).
+The lobby overlay shows the button when `heroPicked && !selectedBuild &&
+!buildPrompt?.length` and there's at least one build, reusing M7's `BuildPicker`.
+
+**Verify:** vitest for the show/hide condition, plus Playwright against the stubbed
+lobby overlay (declined → button → list → pick).
+
+### M9 — Minion detail on hover in the build sidebar
+
+Tooltip on each target and addon row: tier, tribe(s) via `tribeLabel`, and card
+text via the existing `cardTextParts` (keeps Hearthstone's bold keywords).
+
+**Verify:** Playwright hover screenshot of the stubbed build overlay, including a
+row near the bottom (tooltip flips above).
+
+## Risks
+
+- **Hover-to-click over the live game is unproven,** like M6's click-through. If a
+  forwarded `mouseleave` goes missing, the overlay could stay clickable. The
+  unmount reset covers the known case. If it still sticks in a real game, the
+  fallback is to drop the flag on a timer.
+- Clicking a focusable overlay takes focus from Hearthstone, which is the same
+  trade-off the build prompt already makes.

@@ -14,6 +14,12 @@ let mainWin: BrowserWindow | undefined
 let highlightWin: BrowserWindow | undefined
 type OverlayKind = 'odds' | 'lobby' | 'build'
 const overlays: Partial<Record<OverlayKind, BrowserWindow>> = {}
+/**
+ * Overlays whose pointer is over a button right now. Locked overlays are
+ * click-through, so their buttons only take clicks while hovered, and clicks
+ * anywhere else on the overlay still reach the game.
+ */
+const hovered = new Set<BrowserWindow>()
 
 const preload = join(__dirname, '../preload/index.cjs')
 
@@ -171,7 +177,7 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   for (const kind of ['odds', 'lobby', 'build'] as const) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
-    const clickable = kind === 'odds' && prompting
+    const clickable = (kind === 'odds' && prompting) || hovered.has(win)
     // The build sidebar has nothing to say until a build is chosen, so unlike
     // the others it stays hidden even when its toggle is on.
     const on = kind === 'odds' ? o.showOdds || prompting : kind === 'lobby' ? o.showLobby : o.showBuild && !!snap.selectedBuild
@@ -181,6 +187,8 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
     win.setOpacity(o.opacity)
     if (wanted && !win.isVisible()) win.showInactive()
     if (!wanted && win.isVisible()) win.hide()
+    // A hidden window gets no mouseleave, so forget it was hovered.
+    if (!wanted) hovered.delete(win)
   }
 }
 
@@ -242,6 +250,13 @@ function registerIpc() {
     return store.settings
   })
 
+  ipcMain.handle('overlay:interactive', (e, on: boolean) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (!win) return
+    if (on) hovered.add(win)
+    else hovered.delete(win)
+    updateOverlays()
+  })
   ipcMain.handle('app:openExternal', (_e, url: string) => {
     if (/^https:\/\//.test(url)) void shell.openExternal(url)
   })

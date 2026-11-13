@@ -1,8 +1,8 @@
 import { createRoot } from 'react-dom/client'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes } from 'react'
 import './styles.css'
 import { HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
-import { TRIBES, artUrl, buildProgress, currentSession, sortedTargets, tribeLabel, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, buildProgress, buildsByLobby, currentSession, sortedTargets, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 import type { BgSnapshot, Build } from '../../shared/types'
 
 const param = new URLSearchParams(location.search).get('kind')
@@ -83,11 +83,76 @@ function OddsOverlay({ snap }: { snap: BgSnapshot }) {
 }
 
 /** What you're building towards: the current stage, ticked off against your board. */
+/**
+ * Pointer handlers that make this overlay take clicks while the pointer is
+ * inside. A locked overlay is otherwise click-through, and only mouse moves
+ * reach it. Unmounting while inside clears it too, because an element that
+ * disappears from under the pointer never gets its mouseleave.
+ */
+function useClickZone() {
+  const inside = useRef(false)
+  const set = (on: boolean) => {
+    inside.current = on
+    void window.api.setInteractive(on)
+  }
+  useEffect(() => () => void (inside.current && window.api.setInteractive(false)), [])
+  return { onMouseEnter: () => set(true), onMouseLeave: () => set(false) }
+}
+
+function OvButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button {...props} {...useClickZone()} />
+}
+
+/**
+ * Every saved build, this lobby's tribes first. Builds are fetched when it
+ * opens, since saving one in the main window doesn't broadcast.
+ */
+function BuildPicker({ snap, onClose }: { snap: BgSnapshot; onClose: () => void }) {
+  const [builds] = useBuilds()
+  const zone = useClickZone()
+  const [relevant, rest] = buildsByLobby(builds, snap.tribes)
+  const row = (b: Build) => (
+    <button
+      key={b.id}
+      className={`ov-prompt-build ${b.id === snap.selectedBuild?.id ? 'current' : ''}`}
+      onClick={() => {
+        void window.api.selectBuild(b.id)
+        onClose()
+      }}
+    >
+      {b.tribe && (
+        <span className="tribe" style={{ ['--tc' as string]: TRIBES[b.tribe]?.color ?? 'var(--accent)' }}>
+          {tribeLabel(b.tribe)}
+        </span>
+      )}
+      <b>{b.name}</b>
+    </button>
+  )
+  return (
+    <div className="ov-card ov-prompt ov-picker" {...zone}>
+      <div className="ov-head">
+        <b>Pick a build</b>
+        <button className="btn btn-sm ov-prompt-skip" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+      <div className="ov-prompt-list">
+        {relevant.map(row)}
+        {rest.length > 0 && <div className="ov-build-sub">Other tribes</div>}
+        {rest.map(row)}
+        {!builds.length && <span className="muted small">No builds yet. Make one on the Builds page.</span>}
+      </div>
+    </div>
+  )
+}
+
 function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const build = snap.selectedBuild
   const pool = usePool()
   const names = useMemo(() => new Map(pool.map((c) => [c.id, c.name])), [pool])
+  const [picking, setPicking] = useState(false)
   if (!build) return null
+  if (picking) return <BuildPicker snap={snap} onClose={() => setPicking(false)} />
   const p = buildProgress(build, Math.max(1, snap.round), snap.board, snap.shop)
   if (!p) return null
   const done = p.have === p.minions.length
@@ -98,6 +163,9 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
         <span className="muted small">
           {p.have}/{p.minions.length}
         </span>
+        <OvButton className="btn btn-sm" onClick={() => setPicking(true)}>
+          Change
+        </OvButton>
       </div>
       <div className={`ov-build-turn ${!done && p.turnsLeft < 0 ? 'danger' : ''}`}>
         {done ? 'Stage complete' : p.turnsLeft > 0 ? `by turn ${p.stage.byTurn} · ${p.turnsLeft} to go` : p.turnsLeft === 0 ? `by turn ${p.stage.byTurn} · this turn` : `${-p.turnsLeft} turn${p.turnsLeft === -1 ? '' : 's'} overdue`}

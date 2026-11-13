@@ -101,6 +101,12 @@ export function useBuilds() {
   return [builds, save, remove] as const
 }
 
+/** Builds split into those that fit this lobby's tribes (or any lobby) and the rest. */
+export function buildsByLobby(builds: Build[], tribes: string[]) {
+  const relevant = builds.filter((b) => !b.tribe || tribes.includes(b.tribe))
+  return [relevant, builds.filter((b) => !relevant.includes(b))] as const
+}
+
 /** Build stages, earliest turn first. The editor doesn't reorder while you type. */
 export function sortedTargets(b: Build) {
   return [...b.targets].sort((x, y) => x.byTurn - y.byTurn)

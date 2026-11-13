@@ -34,6 +34,8 @@ const api = {
   settings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:update', patch),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
+  /** Overlays only: take clicks while the pointer is over a button. */
+  setInteractive: (on: boolean): Promise<void> => ipcRenderer.invoke('overlay:interactive', on),
 }
 
 export type Api = typeof api

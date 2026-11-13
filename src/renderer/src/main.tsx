@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
 import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, Comp, SetupStatus } from '../../shared/types'
 import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips, segments } from './components'
-import { TRIBES, artUrl, cardTextParts, cardTextPlain, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, buildsByLobby, cardTextParts, cardTextPlain, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
 type Page = 'live' | 'minions' | 'builds' | 'history' | 'stats' | 'settings'
 
@@ -231,8 +231,7 @@ function LivePage({ snap, matches }: { snap?: BgSnapshot; matches: BgMatch[] }) 
 function BuildBar({ snap }: { snap: BgSnapshot }) {
   const [builds] = useBuilds()
   const current = snap.selectedBuild
-  const relevant = builds.filter((b) => !b.tribe || snap.tribes.includes(b.tribe))
-  const rest = builds.filter((b) => !relevant.includes(b))
+  const [relevant, rest] = buildsByLobby(builds, snap.tribes)
   if (!builds.length) return null
   return (
     <div className="build-bar">
