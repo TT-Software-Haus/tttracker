@@ -1755,6 +1755,16 @@ a {
 .input-code {
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+  white-space: pre;
+  overflow-x: auto;
+}
+.build-share {
+  align-items: flex-start;
+}
+.build-share .btn {
+  margin-top: 2px;
 }
 .ov-build-sub {
   margin-top: 4px;

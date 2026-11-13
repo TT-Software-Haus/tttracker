@@ -422,9 +422,9 @@ function ImportBuild({ onImport }: { onImport: (b: Omit<Build, 'id'>) => void })
   const go = async () => {
     try {
       const { build, missing } = await window.api.importBuild(code)
-      // Missing cards mean this code came from a different card database —
-      // worth saying, since the board will be short.
-      if (missing) alert(`Imported, but ${missing} card${missing === 1 ? '' : 's'} couldn’t be found in your card data and were left out.`)
+      // Naming what went missing is the point of a readable format — the
+      // recipient can fix the line and paste it again.
+      if (missing.length) alert(['Imported, but these weren’t found in your card data and were left out:', '', ...missing].join('\n'))
       onImport(build)
     } catch (e) {
       setError((e as Error).message.replace(/^Error invoking remote method '[^']+': Error: /, ''))
@@ -434,16 +434,16 @@ function ImportBuild({ onImport }: { onImport: (b: Omit<Build, 'id'>) => void })
     <div className="card-box find-build">
       <div className="box-title">Import a build</div>
       <div className="build-share">
-        <input
-          className="input"
+        <textarea
+          className="input input-code"
           autoFocus
-          placeholder="Paste a build code (starts with HTB1)…"
+          rows={4}
+          placeholder={['Paste a build, e.g.', 'HTB Scam murlocs [Murlocs]', 'T4: Murloc Tidecaller; Murloc Tidehunter'].join(String.fromCharCode(10))}
           value={code}
           onChange={(e) => {
             setCode(e.target.value)
             setError(undefined)
           }}
-          onKeyDown={(e) => e.key === 'Enter' && code.trim() && void go()}
         />
         <button className="btn btn-primary" disabled={!code.trim()} onClick={() => void go()}>
           Import
@@ -547,6 +547,7 @@ function Picker({ build, pool, query, setQuery, onPick }: { build: Build; pool: 
 function ShareBuild({ build }: { build: Build }) {
   const [code, setCode] = useState<string>()
   const [copied, setCopied] = useState(false)
+  const rows = code ? code.split(String.fromCharCode(10)).length : 1
   const show = async () => {
     const c = await window.api.exportBuild(build.id)
     setCode(c)
@@ -566,7 +567,7 @@ function ShareBuild({ build }: { build: Build }) {
       </button>
       {code && (
         <>
-          <input className="input input-code" readOnly value={code} onFocus={(e) => e.currentTarget.select()} />
+          <textarea className="input input-code" readOnly rows={rows} value={code} onFocus={(e) => e.currentTarget.select()} />
           <span className="muted small">{copied ? 'Copied' : 'Select and copy'}</span>
         </>
       )}

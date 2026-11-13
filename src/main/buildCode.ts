@@ -1,62 +1,110 @@
-import { deflateRawSync, inflateRawSync } from 'node:zlib'
 import type { Build, BuildTarget } from '../shared/types'
+import { tribeFromWord } from './vision/tribeNames'
 
 /**
- * Builds as a short shareable string.
+ * Builds as text you can read, paste and edit by hand:
  *
- * Three things keep it short enough to paste into a chat message. Cards travel
- * as dbfIds rather than card ids ("BG28_633" is 8 bytes, 110664 is 6 and
- * compresses far better). The payload is a positional array, so none of the
- * field names are in it. And it's deflated before base64 — all stdlib, no
- * dependency. A three-stage build lands around 150 characters.
+ *   HTB Scam murlocs [Murlocs]
+ *   T4: Murloc Tidecaller; Murloc Tidehunter
+ *   T9: Primalfin Lookout; Primalfin Totem; Bloodlust Warleader
+ *   +: Zapp Slywick
  *
- * The lookups are injected so this can be tested without electron, and so the
- * card database stays the one place that knows about dbfIds.
+ * Minions are separated by `;` rather than the obvious comma because 51 card
+ * names contain one ("Agamaggan, the Great Boar"). `;` appears in no card name
+ * at all, nor does `|`, which is why a build can also be pasted on a single
+ * line with `|` between the rows for chats that eat newlines.
+ *
+ * Names are safe as identifiers here: across the 303 buyable pool minions, no
+ * two share a name. The payoff for using them is that a build nobody can
+ * resolve fails by *naming what it couldn't find*, and the recipient can fix
+ * the line themselves — which a base64 blob can never offer.
  */
-const PREFIX = 'HTB1'
+const HEADER = /^HTB\b/
 
-type Payload = [name: string, tribe: string, stages: [number, ...number[]][], addons: number[], source?: [string, string]]
-
-export function encodeBuild(build: Build, dbfOf: (cardId: string) => number | undefined): string {
-  const stages = build.targets.map((t) => [t.byTurn, ...t.cardIds.map(dbfOf).filter((d): d is number => !!d)] as [number, ...number[]])
-  const payload: Payload = [build.name, build.tribe, stages, (build.addons ?? []).map(dbfOf).filter((d): d is number => !!d)]
-  if (build.source) payload.push([build.source.name, build.source.url])
-  return PREFIX + deflateRawSync(Buffer.from(JSON.stringify(payload), 'utf8'), { level: 9 }).toString('base64url')
+export function encodeBuild(build: Build, nameOf: (cardId: string) => string | undefined): string {
+  const named = (ids: string[]) => ids.map((id) => nameOf(id) ?? id).join('; ')
+  const rows = [`HTB ${build.name}${build.tribe ? ` [${tribeLabel(build.tribe)}]` : ''}`]
+  for (const t of [...build.targets].sort((a, b) => a.byTurn - b.byTurn)) {
+    if (t.cardIds.length) rows.push(`T${t.byTurn}: ${named(t.cardIds)}`)
+  }
+  if (build.addons?.length) rows.push(`+: ${named(build.addons)}`)
+  if (build.source) rows.push(`from: ${build.source.name} ${build.source.url}`)
+  return rows.join('\n')
 }
 
 export interface Decoded {
   /** Everything but the id — the importer assigns a fresh one. */
   build: Omit<Build, 'id'>
-  /** Cards the local database couldn't resolve, so the board is incomplete. */
-  missing: number
+  /** Names no card could be found for, so the recipient can correct them. */
+  missing: string[]
 }
 
-export function decodeBuild(code: string, idOf: (dbfId: number) => string | undefined): Decoded {
-  const trimmed = code.trim()
-  if (!trimmed.startsWith(PREFIX)) throw new Error("That doesn't look like a build code")
-  let payload: Payload
-  try {
-    payload = JSON.parse(inflateRawSync(Buffer.from(trimmed.slice(PREFIX.length), 'base64url')).toString('utf8'))
-  } catch {
-    throw new Error('That build code is damaged or incomplete')
-  }
-  const [name, tribe, stages, addons, source] = payload
-  if (typeof name !== 'string' || !Array.isArray(stages)) throw new Error('That build code is damaged or incomplete')
+export function decodeBuild(code: string, idOf: (name: string) => string | undefined): Decoded {
+  const text = code.trim()
+  if (!HEADER.test(text)) throw new Error('A build starts with "HTB" — check you copied the whole thing')
 
-  let missing = 0
-  // A dbfId this card database doesn't know is dropped, but counted — the
-  // importer says so rather than quietly handing over a short board.
-  const resolve = (dbfs: number[]) =>
-    dbfs
-      .map((d) => {
-        const id = idOf(d)
-        if (!id) missing++
+  // `|` is accepted as a row separator so a build survives being pasted into
+  // something that strips newlines.
+  const rows = text
+    .split(/[\n|]+/)
+    .map((r) => r.trim())
+    .filter(Boolean)
+
+  const missing: string[] = []
+  const resolve = (list: string) =>
+    list
+      .split(';')
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .map((n) => {
+        const id = idOf(n)
+        if (!id) missing.push(n)
         return id
       })
       .filter((id): id is string => !!id)
 
-  const targets: BuildTarget[] = stages.map(([byTurn, ...dbfs]) => ({ byTurn, cardIds: resolve(dbfs) }))
-  const build: Omit<Build, 'id'> = { name, tribe: tribe ?? '', targets, addons: resolve(addons ?? []) }
-  if (source) build.source = { name: source[0], url: source[1] }
+  const head = rows[0].replace(HEADER, '').trim()
+  const tribeMatch = head.match(/\[([^\]]+)\]\s*$/)
+  const name = (tribeMatch ? head.slice(0, tribeMatch.index).trim() : head) || 'Imported build'
+  const tribe = tribeMatch ? (tribeFromWord(tribeMatch[1]) ?? '') : ''
+
+  const targets: BuildTarget[] = []
+  let addons: string[] = []
+  let source: Build['source']
+  for (const row of rows.slice(1)) {
+    const turn = row.match(/^T(\d+)\s*:\s*(.*)$/i)
+    if (turn) {
+      targets.push({ byTurn: Number(turn[1]), cardIds: resolve(turn[2]) })
+      continue
+    }
+    const addon = row.match(/^\+\s*:\s*(.*)$/)
+    if (addon) {
+      addons = resolve(addon[1])
+      continue
+    }
+    const from = row.match(/^from:\s*(.*?)\s*(https:\/\/\S+)\s*$/i)
+    if (from) source = { name: from[1], url: from[2] }
+    // Anything else is a comment someone added; ignoring it is kinder than failing.
+  }
+  if (!targets.length && !addons.length) throw new Error("That build has no minions in it — rows look like \"T4: Murloc Tidecaller; Murloc Tidehunter\"")
+
+  const build: Omit<Build, 'id'> = { name, tribe, targets, addons }
+  if (source) build.source = source
   return { build, missing }
 }
+
+/** Mirrors the renderer's labels, so what you read is what you'd see in the app. */
+const TRIBE_LABELS: Record<string, string> = {
+  BEAST: 'Beasts',
+  DEMON: 'Demons',
+  DRAGON: 'Dragons',
+  ELEMENTAL: 'Elementals',
+  MECHANICAL: 'Mechs',
+  MURLOC: 'Murlocs',
+  NAGA: 'Naga',
+  PIRATE: 'Pirates',
+  QUILBOAR: 'Quilboar',
+  UNDEAD: 'Undead',
+  ABERRATION: 'Aberrations',
+}
+const tribeLabel = (t: string) => TRIBE_LABELS[t] ?? t
