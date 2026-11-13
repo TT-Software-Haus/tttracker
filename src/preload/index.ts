@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BgMatch, BgSnapshot, Build, CardInfo, Comp, Settings, SetupStatus } from '../shared/types'
+import type { Decoded } from '../main/buildCode'
 
 function subscribe<T>(channel: string, fn: (payload: T) => void) {
   const handler = (_e: unknown, payload: T) => fn(payload)
@@ -26,6 +27,8 @@ const api = {
   deleteBuild: (id: string): Promise<void> => ipcRenderer.invoke('builds:delete', id),
   selectBuild: (id: string | null): Promise<void> => ipcRenderer.invoke('builds:select', id),
   comps: (): Promise<Comp[]> => ipcRenderer.invoke('comps:list'),
+  exportBuild: (id: string): Promise<string> => ipcRenderer.invoke('builds:export', id),
+  importBuild: (code: string): Promise<Decoded> => ipcRenderer.invoke('builds:import', code),
 
   settings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:update', patch),

@@ -159,6 +159,11 @@ export interface Build {
   tribe: string
   /** Ordered by byTurn, earliest first. */
   targets: BuildTarget[]
+  /**
+   * Cards that support the build without being part of the target board —
+   * tempo picks, buff spells, the thing you hold for a tier. No turn attached.
+   */
+  addons?: string[]
   /** Set when the build was started from someone else's published comp. */
   source?: { name: string; url: string }
 }

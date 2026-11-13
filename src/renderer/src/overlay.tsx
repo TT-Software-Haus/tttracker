@@ -96,6 +96,18 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
             {m.have ? <span className="ov-build-tick">✓</span> : m.inShop ? <span className="ov-build-shop">in shop</span> : null}
           </div>
         ))}
+        {p.addons.length > 0 && (
+          <>
+            <div className="ov-build-sub">Addons</div>
+            {p.addons.map((m, i) => (
+              <div key={`a-${m.cardId}-${i}`} className={`ov-build-minion ${m.have ? 'have' : ''} ${m.inShop ? 'in-shop' : ''}`}>
+                <span className="ov-build-art" style={{ backgroundImage: `url(${artUrl(m.cardId)})` }} />
+                <span className="ov-build-name">{names.get(m.cardId) ?? m.cardId}</span>
+                {m.have ? <span className="ov-build-tick">✓</span> : m.inShop ? <span className="ov-build-shop">in shop</span> : null}
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   )

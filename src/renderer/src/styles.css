@@ -1747,3 +1747,20 @@ a {
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
+.build-share {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.input-code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 11px;
+}
+.ov-build-sub {
+  margin-top: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

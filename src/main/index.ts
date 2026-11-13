@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
 import { fetchComps } from './comps'
+import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
 let store: Store
@@ -131,6 +132,12 @@ function registerIpc() {
   ipcMain.handle('builds:delete', (_e, id: string) => store.deleteBuild(id))
   ipcMain.handle('builds:select', (_e, id: string | null) => tracker.selectBuild(id))
   ipcMain.handle('comps:list', () => fetchComps(tracker.cards))
+  ipcMain.handle('builds:export', (_e, id: string) => {
+    const b = store.builds.find((x) => x.id === id)
+    if (!b) throw new Error('That build no longer exists')
+    return encodeBuild(b, (cardId) => tracker.cards.get(cardId)?.dbfId)
+  })
+  ipcMain.handle('builds:import', (_e, code: string) => decodeBuild(code, (dbfId) => tracker.cards.byDbfId(dbfId)?.id))
 
   ipcMain.handle('cards:pool', () => tracker.cards.pool())
 

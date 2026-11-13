@@ -340,6 +340,7 @@ function BuildsPage() {
   const [builds, save, remove] = useBuilds()
   const [open, setOpen] = useState<string>()
   const [finding, setFinding] = useState(false)
+  const [importing, setImporting] = useState(false)
   const create = () => {
     const b: Build = { id: crypto.randomUUID(), name: 'New build', tribe: 'MURLOC', targets: [{ byTurn: 6, cardIds: [] }] }
     save(b)
@@ -366,11 +367,24 @@ function BuildsPage() {
         <button className="btn" onClick={() => setFinding(!finding)}>
           {finding ? 'Close' : 'Find build'}
         </button>
+        <button className="btn" onClick={() => setImporting(!importing)}>
+          {importing ? 'Close' : 'Import'}
+        </button>
         <button className="btn btn-primary" onClick={create}>
           New build
         </button>
       </header>
       {finding && <FindBuild onUse={useComp} />}
+      {importing && (
+        <ImportBuild
+          onImport={(b) => {
+            const made: Build = { ...b, id: crypto.randomUUID() }
+            save(made)
+            setImporting(false)
+            setOpen(made.id)
+          }}
+        />
+      )}
       {!builds.length && (
         <div className="empty-hero">
           <div className="empty-icon">▣</div>
@@ -393,6 +407,45 @@ function BuildsPage() {
           {open === b.id && <BuildEditor build={b} save={save} remove={remove} />}
         </div>
       ))}
+    </div>
+  )
+}
+
+/** Paste a code from someone else. */
+function ImportBuild({ onImport }: { onImport: (b: Omit<Build, 'id'>) => void }) {
+  const [code, setCode] = useState('')
+  const [error, setError] = useState<string>()
+  const go = async () => {
+    try {
+      const { build, missing } = await window.api.importBuild(code)
+      // Missing cards mean this code came from a different card database —
+      // worth saying, since the board will be short.
+      if (missing) alert(`Imported, but ${missing} card${missing === 1 ? '' : 's'} couldn’t be found in your card data and were left out.`)
+      onImport(build)
+    } catch (e) {
+      setError((e as Error).message.replace(/^Error invoking remote method '[^']+': Error: /, ''))
+    }
+  }
+  return (
+    <div className="card-box find-build">
+      <div className="box-title">Import a build</div>
+      <div className="build-share">
+        <input
+          className="input"
+          autoFocus
+          placeholder="Paste a build code (starts with HTB1)…"
+          value={code}
+          onChange={(e) => {
+            setCode(e.target.value)
+            setError(undefined)
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && code.trim() && void go()}
+        />
+        <button className="btn btn-primary" disabled={!code.trim()} onClick={() => void go()}>
+          Import
+        </button>
+      </div>
+      {error && <div className="muted small">{error}</div>}
     </div>
   )
 }
@@ -443,24 +496,74 @@ function FindBuild({ onUse }: { onUse: (c: Comp) => void }) {
   )
 }
 
-function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) => void; remove: (id: string) => void }) {
-  const pool = usePool()
-  const [picking, setPicking] = useState<number>()
-  const [query, setQuery] = useState('')
-  const byId = useMemo(() => new Map(pool.map((c) => [c.id, c])), [pool])
-  const patch = (p: Partial<Build>) => save({ ...build, ...p })
-  const setTarget = (i: number, t: BuildTarget) => patch({ targets: build.targets.map((x, j) => (j === i ? t : x)) })
-
-  // Minions you could actually build with: this tribe, plus neutrals.
+/** Shared by the stage rows and the addons row. */
+function Picker({ build, pool, query, setQuery, onPick }: { build: Build; pool: CardInfo[]; query: string; setQuery: (q: string) => void; onPick: (c: CardInfo) => void }) {
+  // Minions you could actually build with: this tribe, plus neutrals. An
+  // "any tribe" build has no filter to apply, so it sees everything.
   const candidates = useMemo(
     () =>
       pool
-        .filter((c) => !c.races?.length || c.races.includes('ALL') || c.races.includes(build.tribe))
+        .filter((c) => !build.tribe || !c.races?.length || c.races.includes('ALL') || c.races.includes(build.tribe))
         .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()))
         .sort((a, b) => (a.techLevel ?? 0) - (b.techLevel ?? 0) || a.name.localeCompare(b.name))
         .slice(0, 48),
     [pool, build.tribe, query],
   )
+  return (
+    <div className="build-picker">
+      <input className="input search" autoFocus placeholder={`Search ${build.tribe ? tribeLabel(build.tribe) + ' and neutral' : 'all'} minions…`} value={query} onChange={(e) => setQuery(e.target.value)} />
+      {!pool.length && <div className="muted small">Loading card data…</div>}
+      <div className="build-picker-grid">
+        {candidates.map((c) => (
+          <button key={c.id} className="build-minion" title={c.name} style={{ backgroundImage: `url(${artUrl(c.id)})` }} onClick={() => onPick(c)}>
+            <span>
+              ★{c.techLevel} {c.name}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** A build as a short code, for pasting to someone else. */
+function ShareBuild({ build }: { build: Build }) {
+  const [code, setCode] = useState<string>()
+  const [copied, setCopied] = useState(false)
+  const show = async () => {
+    const c = await window.api.exportBuild(build.id)
+    setCode(c)
+    // Clipboard can refuse (no focus, denied permission) — the box below is
+    // the fallback, so a failure here isn't worth interrupting anyone over.
+    try {
+      await navigator.clipboard.writeText(c)
+      setCopied(true)
+    } catch {
+      setCopied(false)
+    }
+  }
+  return (
+    <div className="build-share">
+      <button className="btn btn-sm" onClick={() => void show()}>
+        {code ? 'Copy again' : 'Export'}
+      </button>
+      {code && (
+        <>
+          <input className="input input-code" readOnly value={code} onFocus={(e) => e.currentTarget.select()} />
+          <span className="muted small">{copied ? 'Copied' : 'Select and copy'}</span>
+        </>
+      )}
+    </div>
+  )
+}
+
+function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) => void; remove: (id: string) => void }) {
+  const pool = usePool()
+  const [picking, setPicking] = useState<number | 'addons'>()
+  const [query, setQuery] = useState('')
+  const byId = useMemo(() => new Map(pool.map((c) => [c.id, c])), [pool])
+  const patch = (p: Partial<Build>) => save({ ...build, ...p })
+  const setTarget = (i: number, t: BuildTarget) => patch({ targets: build.targets.map((x, j) => (j === i ? t : x)) })
 
   return (
     <div className="build-body">
@@ -517,28 +620,16 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
             )}
           </div>
           {picking === i && (
-            <div className="build-picker">
-              <input className="input search" autoFocus placeholder={`Search ${tribeLabel(build.tribe)} and neutral minions…`} value={query} onChange={(e) => setQuery(e.target.value)} />
-              {!pool.length && <div className="muted small">Loading card data…</div>}
-              <div className="build-picker-grid">
-                {candidates.map((c) => (
-                  <button
-                    key={c.id}
-                    className="build-minion"
-                    title={c.name}
-                    style={{ backgroundImage: `url(${artUrl(c.id)})` }}
-                    onClick={() => {
-                      setTarget(i, { ...t, cardIds: [...t.cardIds, c.id] })
-                      if (t.cardIds.length + 1 >= 7) setPicking(undefined)
-                    }}
-                  >
-                    <span>
-                      ★{c.techLevel} {c.name}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <Picker
+              build={build}
+              pool={pool}
+              query={query}
+              setQuery={setQuery}
+              onPick={(c) => {
+                setTarget(i, { ...t, cardIds: [...t.cardIds, c.id] })
+                if (t.cardIds.length + 1 >= 7) setPicking(undefined)
+              }}
+            />
           )}
         </div>
       ))}
@@ -546,6 +637,34 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
       <button className="btn btn-sm" onClick={() => patch({ targets: [...build.targets, { byTurn: (sortedTargets(build).at(-1)?.byTurn ?? 4) + 3, cardIds: [] }] })}>
         Add stage
       </button>
+
+      <div className="build-target">
+        <div className="build-target-head">
+          <b className="small">Addon cards</b>
+          <span className="muted small">support picks, no turn attached</span>
+        </div>
+        <div className="build-minions">
+          {(build.addons ?? []).map((id, k) => (
+            <button
+              key={`${id}-${k}`}
+              className="build-minion"
+              title={`${byId.get(id)?.name ?? id} — click to remove`}
+              style={{ backgroundImage: `url(${artUrl(id)})` }}
+              onClick={() => patch({ addons: (build.addons ?? []).filter((_, m) => m !== k) })}
+            >
+              <span>{byId.get(id)?.name ?? id}</span>
+            </button>
+          ))}
+          <button className="build-minion build-add" onClick={() => setPicking(picking === 'addons' ? undefined : 'addons')}>
+            <span>{picking === 'addons' ? 'Close' : '+ Add'}</span>
+          </button>
+        </div>
+        {picking === 'addons' && (
+          <Picker build={build} pool={pool} query={query} setQuery={setQuery} onPick={(c) => patch({ addons: [...(build.addons ?? []), c.id] })} />
+        )}
+      </div>
+
+      <ShareBuild build={build} />
     </div>
   )
 }

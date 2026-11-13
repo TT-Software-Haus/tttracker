@@ -127,9 +127,15 @@ export function buildProgress(build: Build, round: number, board: BoardMinion[],
     // Worth shouting about: it's in the tavern now and you haven't got it.
     inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
   }))
+  const addons = (build.addons ?? []).map((cardId) => ({
+    cardId,
+    have: owned.has(baseCardId(cardId)),
+    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
+  }))
   return {
     stage,
     minions,
+    addons,
     have: minions.filter((m) => m.have).length,
     turnsLeft: stage.byTurn - round,
     /** The last stage, i.e. there's nothing further to work towards. */
