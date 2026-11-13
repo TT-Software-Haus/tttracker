@@ -62,11 +62,34 @@ export class CardDb {
     return [...this.byId.values()].filter((c) => c.type === 'MINION' && c.set === 'BATTLEGROUNDS')
   }
 
+  /**
+   * Battlegrounds minions in a stable order, so a card can be shared as a
+   * small index instead of a six-digit id. Sorted by dbfId, which Hearthstone
+   * allocates upwards, so new cards land at the end and existing positions
+   * hold. Golden copies are excluded — a build means the minion, not a triple.
+   */
+  private shareIndex?: CardInfo[]
+  shareList(): CardInfo[] {
+    return (this.shareIndex ??= this.bgMinions()
+      .filter((c) => !c.normalId)
+      .sort((a, b) => a.dbfId - b.dbfId))
+  }
+
+  shareIndexOf(cardId: string): number | undefined {
+    const i = this.shareList().findIndex((c) => c.id === cardId)
+    return i < 0 ? undefined : i
+  }
+
+  shareCardAt(index: number): string | undefined {
+    return this.shareList()[index]?.id
+  }
+
   pool(): CardInfo[] {
     return [...this.byId.values()].filter((c) => c.pool)
   }
 
   load(cards: CardInfo[]) {
+    this.shareIndex = undefined
     this.byId.clear()
     this.byDbf.clear()
     this.bgByName.clear()

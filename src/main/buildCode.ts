@@ -1,110 +1,172 @@
 import type { Build, BuildTarget } from '../shared/types'
-import { tribeFromWord } from './vision/tribeNames'
 
 /**
- * Builds as text you can read, paste and edit by hand:
+ * Builds as a short shareable code:
  *
- *   HTB Scam murlocs [Murlocs]
- *   T4: Murloc Tidecaller; Murloc Tidehunter
- *   T9: Primalfin Lookout; Primalfin Totem; Bloodlust Warleader
- *   +: Zapp Slywick
+ *   HTB Scam murlocs [m]|4:AHAJAPAfAtBB c:KYUr +Aq#3f
  *
- * Minions are separated by `;` rather than the obvious comma because 51 card
- * names contain one ("Agamaggan, the Great Boar"). `;` appears in no card name
- * at all, nor does `|`, which is why a build can also be pasted on a single
- * line with `|` between the rows for chats that eat newlines.
+ * Cards are indices into the Battlegrounds minion list sorted by dbfId — about
+ * 1260 entries — written as two characters each from a 64-symbol alphabet.
+ * Fixed width means no separators between cards, which is most of the saving.
+ * A 26-card build lands near 90 characters, against ~160 as base64 and ~480
+ * written out in card names.
  *
- * Names are safe as identifiers here: across the 303 buyable pool minions, no
- * two share a name. The payoff for using them is that a build nobody can
- * resolve fails by *naming what it couldn't find*, and the recipient can fix
- * the line themselves — which a base64 blob can never offer.
+ * The structure stays visible on purpose: `4:` `8:` `c:` are the stage turns,
+ * `+` starts the addons, `#` is a checksum. You can see the shape of a build
+ * without being able to read the minions.
+ *
+ * The index depends on that card list only ever growing at the end, which is
+ * how dbfIds are allocated. If it ever doesn't, the checksum catches it: a
+ * decode that doesn't match refuses rather than quietly handing over a build
+ * made of the wrong minions.
  */
 const HEADER = /^HTB\b/
 
-export function encodeBuild(build: Build, nameOf: (cardId: string) => string | undefined): string {
-  const named = (ids: string[]) => ids.map((id) => nameOf(id) ?? id).join('; ')
-  const rows = [`HTB ${build.name}${build.tribe ? ` [${tribeLabel(build.tribe)}]` : ''}`]
-  for (const t of [...build.targets].sort((a, b) => a.byTurn - b.byTurn)) {
-    if (t.cardIds.length) rows.push(`T${t.byTurn}: ${named(t.cardIds)}`)
+/** Single-letter tribe codes, so a tribe costs three characters, not nine. */
+const TRIBE_CODES: Record<string, string> = {
+  b: 'BEAST',
+  d: 'DEMON',
+  g: 'DRAGON',
+  e: 'ELEMENTAL',
+  h: 'MECHANICAL',
+  m: 'MURLOC',
+  n: 'NAGA',
+  p: 'PIRATE',
+  q: 'QUILBOAR',
+  u: 'UNDEAD',
+  a: 'ABERRATION',
+}
+const codeForTribe = (t: string) => Object.keys(TRIBE_CODES).find((k) => TRIBE_CODES[k] === t)
+
+/**
+ * Indices are two characters from a 64-symbol alphabet: 4096 slots for a list
+ * currently at ~1260, and fixed width so no separator is needed between cards.
+ *
+ * The first attempt here used base36 and capitalised each number's last digit
+ * to mark where it ended. That silently fails: "7".toUpperCase() is "7", so
+ * every index ending in a digit ran into the next one.
+ */
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+const WIDTH = 2
+const CAPACITY = ALPHABET.length ** WIDTH
+
+function packNum(n: number): string {
+  if (n < 0 || n >= CAPACITY) throw new Error(`Card index ${n} is out of range for a build code`)
+  return ALPHABET[Math.floor(n / ALPHABET.length)] + ALPHABET[n % ALPHABET.length]
+}
+
+function unpackNums(s: string): number[] {
+  if (s.length % WIDTH) throw new Error('That build code is cut short')
+  const out: number[] = []
+  for (let i = 0; i < s.length; i += WIDTH) {
+    const hi = ALPHABET.indexOf(s[i])
+    const lo = ALPHABET.indexOf(s[i + 1])
+    if (hi < 0 || lo < 0) throw new Error(`Unexpected character in a build code`)
+    out.push(hi * ALPHABET.length + lo)
   }
-  if (build.addons?.length) rows.push(`+: ${named(build.addons)}`)
-  if (build.source) rows.push(`from: ${build.source.name} ${build.source.url}`)
-  return rows.join('\n')
+  return out
+}
+
+/** Cheap, order-sensitive, and only two characters on the wire. */
+function checksum(ids: number[]): string {
+  let h = 7
+  for (const n of ids) h = (h * 31 + n) % 1296
+  return h.toString(36).padStart(2, '0')
+}
+
+export interface Codec {
+  /** Position of a card in the dbfId-sorted Battlegrounds minion list. */
+  indexOf: (cardId: string) => number | undefined
+  cardAt: (index: number) => string | undefined
+}
+
+export function encodeBuild(build: Build, codec: Codec): string {
+  const seen: number[] = []
+  const pack = (ids: string[]) =>
+    ids
+      .map(codec.indexOf)
+      .filter((i): i is number => i !== undefined)
+      .map((i) => {
+        seen.push(i)
+        return packNum(i)
+      })
+      .join('')
+
+  const tribe = codeForTribe(build.tribe)
+  const parts: string[] = []
+  for (const t of [...build.targets].sort((a, b) => a.byTurn - b.byTurn)) {
+    if (t.cardIds.length) parts.push(`${t.byTurn.toString(36)}:${pack(t.cardIds)}`)
+  }
+  if (build.addons?.length) parts.push(`+${pack(build.addons)}`)
+  // HSReplay comps are reconstructed from the id alone rather than a whole URL.
+  const comp = build.source?.url.match(/\/comps\/(\d+)\//)
+  if (comp) parts.push(`@${comp[1]}`)
+  return `HTB ${build.name}${tribe ? ` [${tribe}]` : ''}|${parts.join(' ')}#${checksum(seen)}`
 }
 
 export interface Decoded {
   /** Everything but the id — the importer assigns a fresh one. */
   build: Omit<Build, 'id'>
-  /** Names no card could be found for, so the recipient can correct them. */
-  missing: string[]
+  /** Indices no card could be found for. */
+  missing: number
 }
 
-export function decodeBuild(code: string, idOf: (name: string) => string | undefined): Decoded {
+export function decodeBuild(code: string, codec: Codec): Decoded {
   const text = code.trim()
-  if (!HEADER.test(text)) throw new Error('A build starts with "HTB" — check you copied the whole thing')
+  if (!HEADER.test(text)) throw new Error('A build code starts with "HTB" — check you copied the whole thing')
+  const bar = text.indexOf('|')
+  if (bar < 0) throw new Error('That build code is damaged — the part after the name is missing')
 
-  // `|` is accepted as a row separator so a build survives being pasted into
-  // something that strips newlines.
-  const rows = text
-    .split(/[\n|]+/)
-    .map((r) => r.trim())
-    .filter(Boolean)
+  const head = text.slice(3, bar).trim()
+  const tribeMatch = head.match(/\[([a-z])\]\s*$/)
+  const name = (tribeMatch ? head.slice(0, tribeMatch.index).trim() : head) || 'Imported build'
+  const tribe = tribeMatch ? (TRIBE_CODES[tribeMatch[1]] ?? '') : ''
 
-  const missing: string[] = []
-  const resolve = (list: string) =>
-    list
-      .split(';')
-      .map((n) => n.trim())
-      .filter(Boolean)
-      .map((n) => {
-        const id = idOf(n)
-        if (!id) missing.push(n)
+  let body = text.slice(bar + 1).trim()
+  let stated: string | undefined
+  const hash = body.lastIndexOf('#')
+  if (hash >= 0) {
+    stated = body.slice(hash + 1).trim()
+    body = body.slice(0, hash)
+  }
+
+  const seen: number[] = []
+  let missing = 0
+  const cards = (packed: string) =>
+    unpackNums(packed)
+      .map((i) => {
+        seen.push(i)
+        const id = codec.cardAt(i)
+        if (!id) missing++
         return id
       })
       .filter((id): id is string => !!id)
 
-  const head = rows[0].replace(HEADER, '').trim()
-  const tribeMatch = head.match(/\[([^\]]+)\]\s*$/)
-  const name = (tribeMatch ? head.slice(0, tribeMatch.index).trim() : head) || 'Imported build'
-  const tribe = tribeMatch ? (tribeFromWord(tribeMatch[1]) ?? '') : ''
-
   const targets: BuildTarget[] = []
   let addons: string[] = []
   let source: Build['source']
-  for (const row of rows.slice(1)) {
-    const turn = row.match(/^T(\d+)\s*:\s*(.*)$/i)
-    if (turn) {
-      targets.push({ byTurn: Number(turn[1]), cardIds: resolve(turn[2]) })
+  for (const part of body.split(/\s+/).filter(Boolean)) {
+    const stage = part.match(/^([0-9a-z]+):(.*)$/)
+    if (stage) {
+      targets.push({ byTurn: parseInt(stage[1], 36), cardIds: cards(stage[2]) })
       continue
     }
-    const addon = row.match(/^\+\s*:\s*(.*)$/)
-    if (addon) {
-      addons = resolve(addon[1])
+    if (part.startsWith('+')) {
+      addons = cards(part.slice(1))
       continue
     }
-    const from = row.match(/^from:\s*(.*?)\s*(https:\/\/\S+)\s*$/i)
-    if (from) source = { name: from[1], url: from[2] }
-    // Anything else is a comment someone added; ignoring it is kinder than failing.
+    const comp = part.match(/^@(\d+)$/)
+    if (comp) source = { name: 'HSReplay · JeefHS', url: `https://hsreplay.net/battlegrounds/comps/${comp[1]}/` }
   }
-  if (!targets.length && !addons.length) throw new Error("That build has no minions in it — rows look like \"T4: Murloc Tidecaller; Murloc Tidehunter\"")
+  if (!targets.length && !addons.length) throw new Error('That build code has no minions in it')
+
+  // The index list shifting under us would otherwise produce a plausible build
+  // made of the wrong cards, which is far worse than refusing to import.
+  if (stated && stated !== checksum(seen)) {
+    throw new Error("That build code doesn't match your card data — it may be from a newer version of the tracker")
+  }
 
   const build: Omit<Build, 'id'> = { name, tribe, targets, addons }
   if (source) build.source = source
   return { build, missing }
 }
-
-/** Mirrors the renderer's labels, so what you read is what you'd see in the app. */
-const TRIBE_LABELS: Record<string, string> = {
-  BEAST: 'Beasts',
-  DEMON: 'Demons',
-  DRAGON: 'Dragons',
-  ELEMENTAL: 'Elementals',
-  MECHANICAL: 'Mechs',
-  MURLOC: 'Murlocs',
-  NAGA: 'Naga',
-  PIRATE: 'Pirates',
-  QUILBOAR: 'Quilboar',
-  UNDEAD: 'Undead',
-  ABERRATION: 'Aberrations',
-}
-const tribeLabel = (t: string) => TRIBE_LABELS[t] ?? t

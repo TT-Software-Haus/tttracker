@@ -108,6 +108,12 @@ function broadcast(channel: string, payload?: unknown) {
   for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(channel, payload)
 }
 
+/** Card lookups for build codes, which address cards by their share index. */
+const codec = () => ({
+  indexOf: (cardId: string) => tracker.cards.shareIndexOf(cardId),
+  cardAt: (index: number) => tracker.cards.shareCardAt(index),
+})
+
 function registerIpc() {
   ipcMain.handle('tracker:snapshot', () => tracker.snapshot())
   ipcMain.handle('setup:status', () => tracker.setupStatus())
@@ -141,17 +147,9 @@ function registerIpc() {
   ipcMain.handle('builds:export', (_e, id: string) => {
     const b = store.builds.find((x) => x.id === id)
     if (!b) throw new Error('That build no longer exists')
-    return encodeBuild(b, (cardId) => tracker.cards.get(cardId)?.name)
+    return encodeBuild(b, codec())
   })
-  ipcMain.handle('builds:import', (_e, code: string) =>
-    decodeBuild(code, (name) => {
-      // A name can belong to several cards (a golden copy, an old token).
-      // Prefer the one you could actually buy, and never the golden: a build
-      // means "this minion", not "this minion, tripled".
-      const candidates = tracker.cards.bgMinionsNamed(name)
-      return (candidates.find((c) => c.pool && !c.normalId) ?? candidates.find((c) => !c.normalId) ?? candidates[0])?.id
-    }),
-  )
+  ipcMain.handle('builds:import', (_e, code: string) => decodeBuild(code, codec()))
 
   ipcMain.handle('cards:pool', () => tracker.cards.pool())
 
