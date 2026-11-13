@@ -43,6 +43,13 @@ describe('sharing a build as a code', () => {
     expect(out).toEqual(rest)
   })
 
+  it('leaves the description out, so codes stay short', () => {
+    const described: Build = { ...build, description: 'Use [[Felboar||110664]] to eat the shop. '.repeat(20) }
+    const code = encodeBuild(described, codec)
+    expect(code).toBe(encodeBuild(build, codec))
+    expect(decodeBuild(code, codec).build.description).toBeUndefined()
+  })
+
   it('is short', () => {
     // Three stages of seven plus five addons — the biggest build anyone makes.
     const big: Build = {

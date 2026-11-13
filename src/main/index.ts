@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
-import { fetchCompAddons, fetchComps } from './comps'
+import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
@@ -226,11 +226,11 @@ function registerIpc() {
   ipcMain.handle('builds:delete', (_e, id: string) => store.deleteBuild(id))
   ipcMain.handle('builds:select', (_e, id: string | null) => tracker.selectBuild(id))
   ipcMain.handle('comps:list', () => fetchComps(tracker.cards))
-  ipcMain.handle('comps:addons', (_e, url: string) => {
+  ipcMain.handle('comps:detail', (_e, url: string) => {
     // The renderer supplies this URL, so pin it to the comps section rather
     // than letting any address reach the network through us.
     if (!/^https:\/\/hsreplay\.net\/battlegrounds\/comps\/[\w/-]+$/.test(url)) throw new Error('Not an HSReplay comp URL')
-    return fetchCompAddons(url, (dbfId) => tracker.cards.byDbfId(dbfId)?.id)
+    return fetchCompDetail(url, (dbfId) => tracker.cards.byDbfId(dbfId)?.id)
   })
   ipcMain.handle('builds:export', (_e, id: string) => {
     const b = store.builds.find((x) => x.id === id)

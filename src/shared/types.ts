@@ -174,6 +174,11 @@ export interface Build {
    * tempo picks, buff spells, the thing you hold for a tier. No turn attached.
    */
   addons?: string[]
+  /**
+   * Free text on how to play it. From HSReplay this is the comp's How to Play,
+   * with card names kept as `[[Name||dbfId]]` so they can be resolved for display.
+   */
+  description?: string
   /** Set when the build was started from someone else's published comp. */
   source?: { name: string; url: string }
 }

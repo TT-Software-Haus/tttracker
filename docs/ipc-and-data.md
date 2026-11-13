@@ -28,7 +28,7 @@ Every `on*` returns an unsubscribe function, which the hooks return straight out
 | `exportBuild(id)` | `builds:export` | invoke | `string` → share code |
 | `importBuild(code)` | `builds:import` | invoke | `string` → `Decoded`: `{ build: Omit<Build, 'id'>, missing }` |
 | `comps()` | `comps:list` | invoke | → `Comp[]` (fetched from HSReplay) |
-| `compAddons(url)` | `comps:addons` | invoke | `string` → card ids |
+| `compDetail(url)` | `comps:detail` | invoke | `string` → `{ addons: string[], howToPlay: string }` |
 | `settings()` | `settings:get` | invoke | → `Settings` |
 | `updateSettings(patch)` | `settings:update` | invoke | `Partial<Settings>` → merged `Settings` |
 | `openExternal(url)` | `app:openExternal` | invoke | `string` → `void` |
@@ -53,7 +53,7 @@ Notes:
   locked. Overlay buttons send it on pointer enter/leave (and on unmount); main keeps
   a set of hovered windows and folds it into `updateOverlays()`, and forgets a window
   when it's hidden.
-- `comps:addons` only accepts `https://hsreplay.net/battlegrounds/comps/…` URLs, since
+- `comps:detail` only accepts `https://hsreplay.net/battlegrounds/comps/…` URLs, since
   the renderer supplies the address.
 - `builds:export` / `builds:import` go through `buildCode.ts` in main because codes
   address cards by `CardDb.shareIndexOf` / `shareCardAt`. Import throws on a bad
@@ -117,8 +117,10 @@ slots too).
 
 **`Build`** — `id`, `name`, `tribe` (race code; `''` = any lobby, e.g. Menagerie),
 `targets: BuildTarget[]` (`{ byTurn, cardIds }`, ≤7 cards each, earliest first),
-`addons?: string[]` (supporting cards, no turn), `source?: { name, url }` when started
-from a published comp.
+`addons?: string[]` (supporting cards, no turn), `description?: string` (free text;
+from HSReplay it's the How to Play paragraph with card names kept as
+`[[Name||dbfId]]`), `source?: { name, url }` when started from a published comp.
+Share codes carry everything but `id` and `description`.
 
 **`Comp`** — an HSReplay comp: `id`, `name`, `tribe` (`''` if none), `summary`, `tier`
 (1 = S … 3 = B), `difficulty`, `cardIds` (core minions resolved to known ids), `url`.

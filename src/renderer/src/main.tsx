@@ -390,9 +390,10 @@ function BuildsPage() {
     setOpen(b.id)
   }
   const useComp = async (c: Comp) => {
-    // Addons live on the comp's own page, so they cost one extra request at
-    // the moment of picking. A failure there still gives a usable build.
-    const addons = await window.api.compAddons(c.url).catch(() => [])
+    // Addons and the How to Play guide live on the comp's own page, so they
+    // cost one extra request at the moment of picking. A failure there still
+    // gives a usable build.
+    const detail = await window.api.compDetail(c.url).catch(() => ({ addons: [], howToPlay: '' }))
     const b: Build = {
       id: crypto.randomUUID(),
       name: c.name,
@@ -400,7 +401,8 @@ function BuildsPage() {
       // The comp pages carry no turn guidance — "when to commit" is prose —
       // so the turn is a starting point you're meant to change.
       targets: [{ byTurn: 8, cardIds: c.cardIds }],
-      addons,
+      addons: detail.addons,
+      description: detail.howToPlay || undefined,
       source: { name: 'HSReplay · JeefHS', url: c.url },
     }
     save(b)
@@ -764,6 +766,14 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
         {picking === 'addons' && (
           <Picker build={build} pool={pool} query={query} setQuery={setQuery} onPick={(c) => patch({ addons: [...(build.addons ?? []), c.id] })} />
         )}
+      </div>
+
+      <div className="build-target">
+        <div className="build-target-head">
+          <b className="small">Description</b>
+          <span className="muted small">how to play it — shown under the minions in the build overlay</span>
+        </div>
+        <textarea className="input build-desc" rows={5} value={build.description ?? ''} placeholder="How to play this build…" onChange={(e) => patch({ description: e.target.value || undefined })} />
       </div>
 
       <ShareBuild build={build} />

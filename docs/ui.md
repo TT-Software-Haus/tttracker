@@ -45,10 +45,11 @@ filterable by tribe. "Only this lobby's tribes" is on by default and uses
 
 **Builds** — saved builds, each expanding into `BuildEditor`: name, tribe, stages
 (`by turn N` + up to 7 minions, picked from `Picker` — tribe tabs, every tier, card
-text) and addon cards. Three ways in besides **New build**:
+text), addon cards, and a free-text Description. Three ways in besides **New build**:
 
 - **Find build** (`FindBuild`) — HSReplay's published comps via `comps()`; picking one
-  also fetches its addons with `compAddons(url)` and stamps `source`. The comp pages
+  also fetches its addons and How to Play text with `compDetail(url)` (one request),
+  fills `addons` and `description`, and stamps `source`. The comp pages
   carry no turn guidance, so the single stage defaults to turn 8.
 - **Import** (`ImportBuild`) — paste an `HTB …` code; decoded in main by `importBuild()`.
 - **Share** (`ShareBuild`, inside the editor) — `exportBuild(id)` → code to copy.

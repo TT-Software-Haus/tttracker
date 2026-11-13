@@ -17,6 +17,8 @@ interface RawComp {
   comp_core_cards: number[]
   /** Detail pages only — the list page doesn't carry these. */
   comp_addon_cards?: number[]
+  /** Detail pages only. One paragraph; card names as `[[Name||dbfId]]`. */
+  comp_how_to_play?: string
 }
 
 /**
@@ -39,24 +41,36 @@ export async function fetchComps(cards: CardDb): Promise<Comp[]> {
   return parseCompsPage(await res.text(), (dbf) => cards.byDbfId(dbf)?.id)
 }
 
+export interface CompDetail {
+  addons: string[]
+  /** The How to Play paragraph, card links intact; '' if the comp has none. */
+  howToPlay: string
+}
+
 /**
- * A single comp's page, which carries the addon cards the list page doesn't.
- * Fetched only when someone actually uses a comp — pulling all 33 up front
- * would be 33 requests to serve a list most of which never gets picked.
+ * A single comp's page, which carries what the list page doesn't: addon cards
+ * and the How to Play guide. Fetched only when someone actually uses a comp —
+ * pulling all 33 up front would be 33 requests to serve a list most of which
+ * never gets picked.
  */
-export async function fetchCompAddons(url: string, cardIdOf: (dbfId: number) => string | undefined): Promise<string[]> {
+export async function fetchCompDetail(url: string, cardIdOf: (dbfId: number) => string | undefined): Promise<CompDetail> {
   const res = await net.fetch(url)
   if (!res.ok) throw new Error(`HSReplay returned ${res.status}`)
-  return parseCompAddons(await res.text(), cardIdOf)
+  return parseCompDetail(await res.text(), cardIdOf)
 }
 
 /** The parsing half of a comp page, so the contract can be tested. */
-export function parseCompAddons(html: string, cardIdOf: (dbfId: number) => string | undefined): string[] {
+export function parseCompDetail(html: string, cardIdOf: (dbfId: number) => string | undefined): CompDetail {
   const blob = html.match(BLOB_RE)
   if (!blob) throw new Error('HSReplay has changed its page layout')
   const raw = JSON.parse(blob[1]) as RawComp
-  // A comp with no addons listed is normal, not a failure.
-  return (raw.comp_addon_cards ?? []).map(cardIdOf).filter((id): id is string => !!id)
+  return {
+    // A comp with no addons or guide is normal, not a failure.
+    addons: (raw.comp_addon_cards ?? []).map(cardIdOf).filter((id): id is string => !!id),
+    // Kept verbatim: the [[Name||dbfId]] links are resolved at display time,
+    // against whatever card data is loaded then.
+    howToPlay: (raw.comp_how_to_play ?? '').trim(),
+  }
 }
 
 /** The parsing half, separated so the page contract can be tested. */

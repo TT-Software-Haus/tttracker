@@ -279,3 +279,59 @@ row near the bottom (tooltip flips above).
   fallback is to drop the flag on a timer.
 - Clicking a focusable overlay takes focus from Hearthstone, which is the same
   trade-off the build prompt already makes.
+
+---
+
+# Follow-up — a description on each build
+
+Asked for 2026-11-13: every build gets a free-text description. "Find build"
+fills it from the comp's **How to Play** section, and the build sidebar shows it
+under the minions to buy.
+
+## What HSReplay gives us
+
+Checked against live comp pages: the detail page's `react_context` blob carries
+`comp_how_to_play`. It's one 480–800 character paragraph with no newlines or
+formatting, except card names written as `[[Felboar||110664]]` (name, dbfId).
+That's the same page `fetchCompAddons` already loads, so it adds no request.
+
+## Decisions taken
+
+- `Build.description?: string`, stored with HSReplay's `[[Name||dbfId]]` links
+  intact so the cards can be resolved at display time. Typed text is plain.
+- **Not in share codes.** Codes stay ~90 chars, and an imported build arrives
+  without a description.
+- **No backfill.** Builds already made from HSReplay stay empty unless edited.
+- **Sidebar shows it in full**, under the minions and addons. The *whole
+  sidebar* scrolls (rather than only the minion list), so a long guide can't
+  squeeze the list to nothing.
+- **Card names render bold, and hovering one shows the same tier/tribe/text
+  tooltip** as the minion rows. Names that resolve to no known card stay bold
+  with no tooltip.
+
+## Milestones
+
+### M10 — Description on a build, filled by Find build ✅ done
+
+`description` on `Build`. `fetchCompAddons` becomes `fetchCompDetail`, returning
+`{ addons, howToPlay }`, and the `comps:addons` IPC becomes `comps:detail`, so
+one request still serves both. `useComp` stores the text. The Builds editor gets
+a Description textarea.
+
+**Verify:** vitest for the parser (the field present, absent, and its markup
+preserved) and that share codes ignore `description`. Playwright on the Builds
+page with a stubbed `window.api`: Find build → the description is filled and
+editable.
+
+### M11 — Description in the build sidebar
+
+A `parseCardLinks` helper in `lib.ts` (text → plain and card-link parts, tested)
+renders the description with bold names. The sidebar card becomes the scroll
+container, and the tooltip code is generalised from rows to any element: it uses
+offsets in the card's content coordinates, and above-placement uses a transform,
+since `bottom` doesn't track content in a scroll container.
+
+**Verify:** vitest for `parseCardLinks`. Playwright on the stubbed build overlay:
+the description renders under the minions, hovering a name shows its card, the
+sidebar scrolls at 520px, and the minion row tooltips still land correctly after
+scrolling.

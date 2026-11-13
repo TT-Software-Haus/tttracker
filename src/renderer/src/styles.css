@@ -1757,6 +1757,12 @@ a {
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
+.build-desc {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
 .build-share {
   display: flex;
   align-items: center;
