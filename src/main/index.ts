@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
-import type { BgSnapshot, Settings } from '../shared/types'
+import type { BgSnapshot, Build, Settings } from '../shared/types'
 
 let store: Store
 let tracker: Tracker
@@ -111,6 +111,12 @@ function registerIpc() {
     store.deleteMatch(id)
     broadcast('data:changed')
   })
+
+  // Builds are only read by the page that edits them (and, from M2, pushed in the
+  // snapshot), so saving doesn't need to broadcast.
+  ipcMain.handle('builds:list', () => store.builds)
+  ipcMain.handle('builds:save', (_e, b: Build) => store.saveBuild(b))
+  ipcMain.handle('builds:delete', (_e, id: string) => store.deleteBuild(id))
 
   ipcMain.handle('cards:pool', () => tracker.cards.pool())
 

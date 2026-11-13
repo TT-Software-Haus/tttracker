@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BgMatch, BgSnapshot, CardInfo, Settings, SetupStatus } from '../shared/types'
+import type { BgMatch, BgSnapshot, Build, CardInfo, Settings, SetupStatus } from '../shared/types'
 
 function subscribe<T>(channel: string, fn: (payload: T) => void) {
   const handler = (_e: unknown, payload: T) => fn(payload)
@@ -18,7 +18,12 @@ const api = {
   browseInstall: (): Promise<string | undefined> => ipcRenderer.invoke('setup:browse'),
 
   matches: (): Promise<BgMatch[]> => ipcRenderer.invoke('matches:list'),
-  deleteMatch: (id: string): Promise<void> => ipcRenderer.invoke('matches:delete', id),  pool: (): Promise<CardInfo[]> => ipcRenderer.invoke('cards:pool'),
+  deleteMatch: (id: string): Promise<void> => ipcRenderer.invoke('matches:delete', id),
+  pool: (): Promise<CardInfo[]> => ipcRenderer.invoke('cards:pool'),
+
+  builds: (): Promise<Build[]> => ipcRenderer.invoke('builds:list'),
+  saveBuild: (b: Build): Promise<void> => ipcRenderer.invoke('builds:save', b),
+  deleteBuild: (id: string): Promise<void> => ipcRenderer.invoke('builds:delete', id),
 
   settings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:update', patch),

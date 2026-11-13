@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { BgMatch, BgSnapshot, CardInfo, GameMode, Settings } from '../../shared/types'
+import type { BgMatch, BgSnapshot, Build, CardInfo, GameMode, Settings } from '../../shared/types'
 
 export const TRIBES: Record<string, { label: string; color: string }> = {
   BEAST: { label: 'Beasts', color: '#c98a3c' },
@@ -84,6 +84,26 @@ export function useMatches() {
     return window.api.onDataChanged(load)
   }, [])
   return matches
+}
+
+/** Builds, with local state kept in step so editing doesn't round-trip through disk. */
+export function useBuilds() {
+  const [builds, setBuilds] = useState<Build[]>([])
+  useEffect(() => void window.api.builds().then(setBuilds), [])
+  const save = (b: Build) => {
+    setBuilds((cur) => (cur.some((x) => x.id === b.id) ? cur.map((x) => (x.id === b.id ? b : x)) : [...cur, b]))
+    void window.api.saveBuild(b)
+  }
+  const remove = (id: string) => {
+    setBuilds((cur) => cur.filter((b) => b.id !== id))
+    void window.api.deleteBuild(id)
+  }
+  return [builds, save, remove] as const
+}
+
+/** Build stages, earliest turn first. The editor doesn't reorder while you type. */
+export function sortedTargets(b: Build) {
+  return [...b.targets].sort((x, y) => x.byTurn - y.byTurn)
 }
 
 let poolCache: Promise<CardInfo[]> | undefined

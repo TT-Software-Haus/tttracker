@@ -134,6 +134,23 @@ export interface BgMatch {
   combats: CombatRound[]
 }
 
+/** One step of a build: the board you want to have by a given turn. */
+export interface BuildTarget {
+  byTurn: number
+  /** Card ids, in the order they should sit on the board. At most 7. */
+  cardIds: string[]
+}
+
+/** A planned warband for one tribe, in stages. */
+export interface Build {
+  id: string
+  name: string
+  /** Tribe this build is for, e.g. 'MURLOC' — matched against the lobby's tribes. */
+  tribe: string
+  /** Ordered by byTurn, earliest first. */
+  targets: BuildTarget[]
+}
+
 export interface OverlaySettings {
   enabled: boolean
   opacity: number

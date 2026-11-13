@@ -1,15 +1,16 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
-import type { BgMatch, BgSnapshot, CardInfo, SetupStatus } from '../../shared/types'
+import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, SetupStatus } from '../../shared/types'
 import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips } from './components'
-import { TRIBES, artUrl, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, timeAgo, tribeLabel, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
-type Page = 'live' | 'minions' | 'history' | 'stats' | 'settings'
+type Page = 'live' | 'minions' | 'builds' | 'history' | 'stats' | 'settings'
 
 const NAV: { id: Page; label: string; icon: string }[] = [
   { id: 'live', label: 'Live game', icon: '◉' },
   { id: 'minions', label: 'Minions', icon: '❖' },
+  { id: 'builds', label: 'Builds', icon: '▣' },
   { id: 'history', label: 'History', icon: '↺' },
   { id: 'stats', label: 'Stats', icon: '◔' },
   { id: 'settings', label: 'Setup', icon: '⚙' },
@@ -48,6 +49,7 @@ function App() {
         )}
         {page === 'live' && <LivePage snap={snap} matches={matches} />}
         {page === 'minions' && <MinionsPage tribes={snap?.tribes ?? []} />}
+        {page === 'builds' && <BuildsPage />}
         {page === 'history' && <HistoryPage matches={matches} />}
         {page === 'stats' && <StatsPage matches={matches} />}
         {page === 'settings' && <SettingsPage />}
@@ -328,6 +330,147 @@ function PoolCard({ c }: { c: CardInfo }) {
         <div className="pool-tribes">{(c.races ?? []).map((r) => (r === 'ALL' ? 'All' : tribeLabel(r))).join(' · ') || 'Neutral'}</div>
         <div className="pool-text">{text}</div>
       </div>
+    </div>
+  )
+}
+
+// ==================================================================== BUILDS
+
+function BuildsPage() {
+  const [builds, save, remove] = useBuilds()
+  const [open, setOpen] = useState<string>()
+  const create = () => {
+    const b: Build = { id: crypto.randomUUID(), name: 'New build', tribe: 'MURLOC', targets: [{ byTurn: 6, cardIds: [] }] }
+    save(b)
+    setOpen(b.id)
+  }
+  return (
+    <div className="page">
+      <header className="page-head">
+        <h1>Builds</h1>
+        <button className="btn btn-primary" onClick={create}>
+          New build
+        </button>
+      </header>
+      {!builds.length && (
+        <div className="empty-hero">
+          <div className="empty-icon">▣</div>
+          <div className="empty-title">No builds yet</div>
+          <div className="muted">Plan a warband for a tribe — which minions you want, and the turn you want them by. When a lobby has that tribe, the tracker offers the build after you pick a hero.</div>
+        </div>
+      )}
+      {builds.map((b) => (
+        <div key={b.id} className="card-box">
+          <button className="build-head" onClick={() => setOpen(open === b.id ? undefined : b.id)}>
+            <span className="tribe" style={{ ['--tc' as string]: TRIBES[b.tribe]?.color ?? 'var(--accent)' }}>
+              {tribeLabel(b.tribe)}
+            </span>
+            <b>{b.name}</b>
+            <span className="muted small">
+              {b.targets.length} stage{b.targets.length === 1 ? '' : 's'} · {sortedTargets(b).at(-1)?.byTurn ?? 0} turns
+            </span>
+            <span className="muted">{open === b.id ? '▾' : '▸'}</span>
+          </button>
+          {open === b.id && <BuildEditor build={b} save={save} remove={remove} />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) => void; remove: (id: string) => void }) {
+  const pool = usePool()
+  const [picking, setPicking] = useState<number>()
+  const [query, setQuery] = useState('')
+  const byId = useMemo(() => new Map(pool.map((c) => [c.id, c])), [pool])
+  const patch = (p: Partial<Build>) => save({ ...build, ...p })
+  const setTarget = (i: number, t: BuildTarget) => patch({ targets: build.targets.map((x, j) => (j === i ? t : x)) })
+
+  // Minions you could actually build with: this tribe, plus neutrals.
+  const candidates = useMemo(
+    () =>
+      pool
+        .filter((c) => !c.races?.length || c.races.includes('ALL') || c.races.includes(build.tribe))
+        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) => (a.techLevel ?? 0) - (b.techLevel ?? 0) || a.name.localeCompare(b.name))
+        .slice(0, 48),
+    [pool, build.tribe, query],
+  )
+
+  return (
+    <div className="build-body">
+      <div className="build-meta">
+        <input className="input" value={build.name} onChange={(e) => patch({ name: e.target.value })} placeholder="Build name" />
+        <select className="input" value={build.tribe} onChange={(e) => patch({ tribe: e.target.value })}>
+          {Object.keys(TRIBES).map((t) => (
+            <option key={t} value={t}>
+              {tribeLabel(t)}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn-danger btn-sm" onClick={() => confirm(`Delete “${build.name}”?`) && remove(build.id)}>
+          Delete build
+        </button>
+      </div>
+
+      {build.targets.map((t, i) => (
+        <div key={i} className="build-target">
+          <div className="build-target-head">
+            <span className="muted small">by turn</span>
+            <input className="input input-num" type="number" min={1} max={30} value={t.byTurn} onChange={(e) => setTarget(i, { ...t, byTurn: Number(e.target.value) })} />
+            <span className="muted small">{t.cardIds.length}/7 minions</span>
+            <button className="btn btn-sm" onClick={() => patch({ targets: build.targets.filter((_, j) => j !== i) })}>
+              Remove stage
+            </button>
+          </div>
+          <div className="build-minions">
+            {t.cardIds.map((id, k) => (
+              <button
+                key={`${id}-${k}`}
+                className="build-minion"
+                title={`${byId.get(id)?.name ?? id} — click to remove`}
+                style={{ backgroundImage: `url(${artUrl(id)})` }}
+                onClick={() => setTarget(i, { ...t, cardIds: t.cardIds.filter((_, m) => m !== k) })}
+              >
+                <span>{byId.get(id)?.name ?? id}</span>
+              </button>
+            ))}
+            {t.cardIds.length < 7 && (
+              <button className="build-minion build-add" onClick={() => setPicking(picking === i ? undefined : i)}>
+                <span>{picking === i ? 'Close' : '+ Add'}</span>
+              </button>
+            )}
+          </div>
+          {picking === i && (
+            <div className="build-picker">
+              <input className="input search" autoFocus placeholder={`Search ${tribeLabel(build.tribe)} and neutral minions…`} value={query} onChange={(e) => setQuery(e.target.value)} />
+              {!pool.length && <div className="muted small">Loading card data…</div>}
+              <div className="build-picker-grid">
+                {candidates.map((c) => (
+                  <button
+                    key={c.id}
+                    className="build-minion"
+                    title={c.name}
+                    style={{ backgroundImage: `url(${artUrl(c.id)})` }}
+                    onClick={() => {
+                      setTarget(i, { ...t, cardIds: [...t.cardIds, c.id] })
+                      if (t.cardIds.length + 1 >= 7) setPicking(undefined)
+                    }}
+                  >
+                    <span>
+                      ★{c.techLevel} {c.name}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      ))}
+
+      <button className="btn btn-sm" onClick={() => patch({ targets: [...build.targets, { byTurn: (sortedTargets(build).at(-1)?.byTurn ?? 4) + 3, cardIds: [] }] })}>
+        Add stage
+      </button>
     </div>
   )
 }

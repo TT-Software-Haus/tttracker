@@ -1,6 +1,6 @@
 import { promises as fs, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { BgMatch, Settings } from '../shared/types'
+import type { BgMatch, Build, Settings } from '../shared/types'
 
 const DEFAULT_SETTINGS: Settings = {
   hearthstonePath: '',
@@ -41,11 +41,13 @@ export class Store {
   private settingsFile: JsonFile<Settings>
   /** Position/size of each window, keyed by window name. */
   private boundsFile: JsonFile<Record<string, Electron.Rectangle>>
+  private buildsFile: JsonFile<Build[]>
 
   constructor(dir: string) {
     this.matchesFile = new JsonFile(join(dir, 'bg-matches.json'), [])
     this.settingsFile = new JsonFile(join(dir, 'settings.json'), DEFAULT_SETTINGS)
     this.boundsFile = new JsonFile(join(dir, 'windows.json'), {})
+    this.buildsFile = new JsonFile(join(dir, 'builds.json'), [])
     const s = this.settingsFile.value
     this.settingsFile.value = { ...DEFAULT_SETTINGS, ...s, overlay: { ...DEFAULT_SETTINGS.overlay, ...s.overlay } }
   }
@@ -67,6 +69,23 @@ export class Store {
     this.matchesFile.save()
   }
 
+  get builds() {
+    return this.buildsFile.value
+  }
+
+  /** Insert or replace by id. */
+  saveBuild(b: Build) {
+    const i = this.builds.findIndex((x) => x.id === b.id)
+    if (i >= 0) this.builds[i] = b
+    else this.builds.push(b)
+    this.buildsFile.save()
+  }
+
+  deleteBuild(id: string) {
+    this.buildsFile.value = this.builds.filter((b) => b.id !== id)
+    this.buildsFile.save()
+  }
+
   updateSettings(patch: Partial<Settings>) {
     const cur = this.settings
     this.settingsFile.value = { ...cur, ...patch, overlay: { ...cur.overlay, ...(patch.overlay ?? {}) } }
@@ -83,6 +102,6 @@ export class Store {
   }
 
   async flushAll() {
-    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile].map((f) => f.flush()))
+    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile, this.buildsFile].map((f) => f.flush()))
   }
 }
