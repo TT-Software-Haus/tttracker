@@ -1627,6 +1627,9 @@ a {
 .ov-prompt-build .muted {
   margin-left: auto;
 }
+.ov-pick-build {
+  margin-left: auto;
+}
 .ov-prompt-build.current {
   border-color: var(--accent);
 }

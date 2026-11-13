@@ -32,6 +32,19 @@ export function buildsToOffer(
 }
 
 /**
+ * Whether the lobby overlay should offer "Pick a build": after the prompt was
+ * dismissed, or when nothing matched the lobby so it never appeared. Not while
+ * the prompt is still up, since that's the same question asked twice.
+ */
+export function canPickBuild(
+  builds: Build[],
+  prompt: Build[] | undefined,
+  state: { heroPicked: boolean; hasSelection: boolean; inGame: boolean },
+): boolean {
+  return state.heroPicked && state.inGame && !state.hasSelection && !prompt && builds.length > 0
+}
+
+/**
  * Finds the logs, tails Power.log, feeds the game model and publishes
  * snapshots. Emits 'snapshot' (BgSnapshot) and 'data' (match history changed).
  */
@@ -385,8 +398,13 @@ export class Tracker extends EventEmitter {
       hasSelection: !!selectedBuild,
       inGame: status === 'in-game',
     })
+    const buildPickable = canPickBuild(this.store.builds, buildPrompt, {
+      heroPicked: this.heroPicked,
+      hasSelection: !!selectedBuild,
+      inGame: status === 'in-game',
+    })
     this.refreshHighlights(base, selectedBuild)
-    const snap: BgSnapshot = { ...base, status, statusDetail, tribes, selectedBuild, buildPrompt, shopHighlights: this.highlights }
+    const snap: BgSnapshot = { ...base, status, statusDetail, tribes, selectedBuild, buildPrompt, buildPickable, shopHighlights: this.highlights }
     this.lastSnapshot = snap
     this.emit('snapshot', snap)
   }

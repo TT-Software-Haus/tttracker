@@ -251,11 +251,14 @@ opens the list, picking calls `selectBuild`, and `setInteractive` is called true
 enter and false on leave or close. Real overlay click-through gets checked in your
 next game.
 
-### M8 — "Pick a build" on the lobby overlay
+### M8 — "Pick a build" on the lobby overlay ✅ done
 
-The snapshot gains `heroPicked: boolean` (a log fact the Tracker already holds).
-The lobby overlay shows the button when `heroPicked && !selectedBuild &&
-!buildPrompt?.length` and there's at least one build, reusing M7's `BuildPicker`.
+The snapshot gains `buildPickable` (changed from the planned `heroPicked`). The
+Tracker computes it with the pure `canPickBuild()`: hero locked in, in game,
+nothing selected, no prompt up, at least one saved build. The Tracker already
+holds the build list, so the overlay doesn't need its own copy, which would go
+stale because saving doesn't broadcast. The lobby overlay shows the button when
+it's set, reusing M7's `BuildPicker`.
 
 **Verify:** vitest for the show/hide condition, plus Playwright against the stubbed
 lobby overlay (declined → button → list → pick).

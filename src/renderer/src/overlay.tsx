@@ -202,16 +202,25 @@ function LobbyOverlay({ snap }: { snap: BgSnapshot }) {
   const matches = useMatches()
   const session = currentSession(matches)
   const next = snap.lobby.find((p) => p.isNextOpponent && !p.dead && p.lastBoard) ?? snap.lobby.find((p) => p.isNextOpponent && !p.dead)
+  const [picking, setPicking] = useState(false)
   return (
-    <div className="ov-card ov-lobby">
-      <div className="ov-head">
-        <b>Turn {Math.max(1, snap.round)}</b>
-        <span className="muted">{snap.mode === 'duos' ? 'Duos' : 'Solo'}</span>
+    <>
+      {picking && snap.buildPickable && <BuildPicker snap={snap} onClose={() => setPicking(false)} />}
+      <div className="ov-card ov-lobby">
+        <div className="ov-head">
+          <b>Turn {Math.max(1, snap.round)}</b>
+          <span className="muted">{snap.mode === 'duos' ? 'Duos' : 'Solo'}</span>
+          {snap.buildPickable && !picking && (
+            <OvButton className="btn btn-sm ov-pick-build" onClick={() => setPicking(true)}>
+              Pick a build
+            </OvButton>
+          )}
+        </div>
+        <SessionStrip s={session} compact />
+        <TribeChips tribes={snap.tribes} />
+        <LobbyList players={snap.lobby} mode={snap.mode} expandedId={hover ?? next?.playerId} onHover={setHover} />
       </div>
-      <SessionStrip s={session} compact />
-      <TribeChips tribes={snap.tribes} />
-      <LobbyList players={snap.lobby} mode={snap.mode} expandedId={hover ?? next?.playerId} onHover={setHover} />
-    </div>
+    </>
   )
 }
 

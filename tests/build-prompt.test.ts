@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildsToOffer } from '../src/main/tracker'
+import { buildsToOffer, canPickBuild } from '../src/main/tracker'
 import type { Build } from '../src/shared/types'
 
 /**
@@ -44,5 +44,35 @@ describe('deciding whether to offer a build', () => {
   it('offers every matching build when two share a tribe', () => {
     const other: Build = { id: 'b3', name: 'Murloc tempo', tribe: 'MURLOC', targets: [] }
     expect(buildsToOffer([...builds, other], ['MURLOC'], ready)).toEqual([murlocs, other])
+  })
+})
+
+/**
+ * The way back to a build from the lobby overlay. It has to appear after a
+ * dismissal (or a lobby nothing matched) and stay out of the way otherwise.
+ */
+describe('offering "Pick a build" on the lobby overlay', () => {
+  const b: Build = { id: 'b1', name: 'Scam murlocs', tribe: 'MURLOC', targets: [] }
+  const ready = { heroPicked: true, hasSelection: false, inGame: true }
+
+  it('appears once the prompt has been answered with no build', () => {
+    expect(canPickBuild([b], undefined, ready)).toBe(true)
+  })
+
+  it('stays hidden while the prompt is still asking', () => {
+    expect(canPickBuild([b], [b], ready)).toBe(false)
+  })
+
+  it('stays hidden during hero select', () => {
+    expect(canPickBuild([b], undefined, { ...ready, heroPicked: false })).toBe(false)
+  })
+
+  it('stays hidden when a build is already being followed — that has its own Change button', () => {
+    expect(canPickBuild([b], undefined, { ...ready, hasSelection: true })).toBe(false)
+  })
+
+  it('stays hidden with no saved builds, and outside a game', () => {
+    expect(canPickBuild([], undefined, ready)).toBe(false)
+    expect(canPickBuild([b], undefined, { ...ready, inGame: false })).toBe(false)
   })
 })

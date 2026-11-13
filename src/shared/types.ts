@@ -125,6 +125,8 @@ export interface BgSnapshot {
   selectedBuild?: Build
   /** Builds worth offering: set once after the hero is picked, cleared once answered. */
   buildPrompt?: Build[]
+  /** Offer a way to pick a build from the overlays: the hero is in, nothing chosen, no prompt up. */
+  buildPickable?: boolean
   /**
    * Where to draw highlight boxes over the real game, relative to Hearthstone's
    * client area. Empty unless a build is selected and one of its minions is on
