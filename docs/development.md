@@ -36,12 +36,15 @@ convention.
 `electron-builder` config is inline in `package.json`: Windows NSIS only, no icon, no
 code signing, no publish or auto-update.
 
-**One runtime dependency, `tesseract.js`** (OCR for the hero-select tribe banner — see
-[architecture.md](architecture.md#screen-reading--srcmainvision)). electron-vite
-externalizes everything in `dependencies`, so it's `require`d from `node_modules` at
-runtime rather than bundled (it runs a worker thread and loads WASM from its own
-package). React, Electron and everything else are devDependencies
-bundled at build time.
+**Two runtime dependencies**: `tesseract.js` (OCR for the hero-select tribe banner — see
+[architecture.md](architecture.md#screen-reading--srcmainvision)) and `koffi` (in-process
+user32 calls for the game window's position, about a microsecond each; the PowerShell
+lookup it replaced compiled C# on every call). electron-vite externalizes everything in
+`dependencies`, so both are `require`d from `node_modules` at runtime rather than bundled:
+tesseract.js runs a worker thread and loads WASM from its own package, and koffi loads its
+prebuilt native binary from `@koromix/koffi-<platform>`. The dev server reads the dependency
+list once at startup, so restart `npm run dev` after adding one. React, Electron and
+everything else are devDependencies bundled at build time.
 
 ## Tests
 

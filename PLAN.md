@@ -335,3 +335,76 @@ since `bottom` doesn't track content in a scroll container.
 the description renders under the minions, hovering a name shows its card, the
 sidebar scrolls at 520px, and the minion row tooltips still land correctly after
 scrolling.
+
+---
+
+# Follow-up — capture Hearthstone with a single-window stream
+
+Asked for 2026-11-13, after measuring the current capture live.
+`desktopCapturer.getSources()` renders a thumbnail of *every* open window (24
+here) and keeps one: ~1.3s and 57MB per call at 720p, 227MB at 2560x1440. The
+tavern loop calls it every couple of seconds through a shop phase. Memory saw-
+toothed to 1.1GB at full size, and the main process sits at ~40% of a core
+while it runs.
+
+## What the probe showed
+
+A hidden window streaming one window via `getDisplayMedia` (main answers with
+that window through `setDisplayMediaRequestHandler`): listing windows without
+thumbnails 0.5s plus starting the stream 0.27s, once; then 13–17ms per frame
+read, one frame (~3.5MB) at a time. Frames arrive at the window's own aspect
+ratio, capped at the requested height. Chromium only sends frames when the
+window changes, so `ImageCapture.grabFrame()` rejected when nothing had changed;
+drawing from a `<video>` element always yields the latest frame. The page must
+be a secure context (`file://` or `localhost`), as the app's already are.
+
+## Decisions taken
+
+- **Stream lifetime:** open only while something needs it: through the tribe
+  read at hero select, and while the highlight loop has boxes to draw. Closed
+  otherwise, combat included.
+- **Tribe OCR moves to the stream too**, at full resolution (1440 high) during
+  hero select. The tavern uses 720 high. One stream at a time, reopened if the
+  requested height changes.
+- **No fallback.** If the stream can't open or stops delivering, there are no
+  boxes (and no tribes read off the screen, which already falls back to the
+  log), with a warning logged; the next read tries again.
+- Detection stays in main, unchanged: the capture window sends back a BGRA
+  frame (swapped from canvas RGBA), the same layout `toBitmap()` gave.
+
+## Milestones
+
+### M12 — Stream capture, used for the tavern
+
+A hidden capture window (`overlay.html?kind=capture`, `backgroundThrottling:
+false`) and a `vision/stream.ts` in main: `captureFrame(height)` opens the
+stream on first use (finding the Hearthstone source without thumbnails, then
+starting it in the capture window) and returns `{ width, height, bgra }`;
+`stopCapture()` closes it. `readShopSlots` uses it at 720; the highlight loop
+calls `stopCapture()` when it stops.
+
+**Verify:** typecheck and tests. In real Electron against a stand-in window
+titled "Hearthstone": frames arrive at the right size, the stream closes when
+told, and repeated reads hold memory flat (vs the 1.37GB loop). Then live shop
+phases in Hearthstone's **Fullscreen** and **windowed** modes: boxes as before,
+no black frames, and the main process's CPU during shops.
+
+### M13 — Tribe OCR on the stream; drop thumbnail capture
+
+`readLobbyTribes` reads a 1440-high frame from the stream and crops the banner
+from it (`nativeImage.createFromBitmap` → `crop` → `toPNG`); the tribe read
+calls `stopCapture()` when it finishes. The thumbnail capture path is deleted.
+
+**Verify:** typecheck and tests, the banner tests against saved frames, then a
+live hero select: the tribes read as before.
+
+## Risks
+
+- **Fullscreen must work** (asked for at approval). Hearthstone's Fullscreen
+  setting on this machine lets other windows draw over the game (every overlay
+  in today's 3840x2160 screenshots), which is borderless-window behaviour, and
+  window capture works there. A true exclusive-fullscreen mode would hide all of
+  the overlays too, so it was never supported. M12's live step checks
+  Hearthstone's Fullscreen *and* windowed modes, and the capture logs a warning
+  when a frame comes back black, so a silent capture failure is visible.
+- A 0.8s open per shop delays the first box of each shop slightly.

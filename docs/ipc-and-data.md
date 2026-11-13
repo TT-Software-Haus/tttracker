@@ -48,7 +48,8 @@ Notes:
   Live page's selector read the list, and `useBuilds()` updates its own state. The
   selected build reaches the overlays through the snapshot instead.
 - `builds:select` sets the game's build (`null` = dismiss the prompt with none) and
-  marks the prompt answered. In memory only: a tracker restart mid-game forgets it.
+  marks the prompt answered. Saved per game in `build-choice.json`, so a tracker restart
+  mid-game keeps it.
 - `overlay:interactive` makes the *sending* overlay take clicks while `on`, even when
   locked. Overlay buttons send it on pointer enter/leave (and on unmount); main keeps
   a set of hovered windows and folds it into `updateOverlays()`, and forgets a window
@@ -84,7 +85,7 @@ Pure types, no runtime code. The contract between main, preload and renderer.
   selectedBuild?: Build     // the build followed this game
   buildPrompt?: Build[]     // builds to offer; set after hero pick, cleared once answered
   buildPickable?: boolean   // offer "Pick a build" on the lobby overlay (canPickBuild)
-  shopHighlights: { x, y, width, height }[]  // Hearthstone client-area coords
+  shopHighlights: { x, y, width, height, debug? }[]  // Hearthstone client-area coords
 }
 ```
 
@@ -129,7 +130,7 @@ Share codes carry everything but `id` and `description`.
 [log-pipeline.md](log-pipeline.md#card-data--carddbts)).
 
 **`Settings`** — `hearthstonePath`, `simIterations`, and
-`overlay: { enabled, opacity, scale, showOdds, showLobby, showBuild, locked }`.
+`overlay: { enabled, opacity, scale, showOdds, showLobby, showBuild, debugHighlights, locked }`.
 
 **`SetupStatus`** — `hearthstonePath`, `installFound`, `logConfigOk`, `logConfigPath`,
 `activeLogDir?`, `powerLogFound`, `cardDbLoaded`, `cardCount`.
@@ -144,6 +145,7 @@ Everything lives in Electron's `userData` directory
 | `bg-matches.json` | `BgMatch[]`, appended on game end, never pruned |
 | `settings.json` | `Settings` |
 | `builds.json` | `Build[]` |
+| `build-choice.json` | `{ game, buildId?, answered }`: the build answer for the latest game, so a restart mid-game keeps it |
 | `windows.json` | `Record<name, Electron.Rectangle>` — `main`, `overlay-odds`, `overlay-lobby`, `overlay-build` |
 | `carddata/cards-v2.json` | HearthstoneJSON cache (owned by `CardDb`, not `Store`) |
 | `carddata/eng.traineddata` | tesseract.js language data (~5 MB), downloaded on first OCR |
@@ -158,4 +160,4 @@ forward-compat measure is the one-level deep merge of defaults into `settings`:
 ```
 
 Defaults: `simIterations: 5000`, overlay
-`{ enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, showBuild: true, locked: true }`.
+`{ enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, showBuild: true, debugHighlights: false, locked: true }`.

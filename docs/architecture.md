@@ -58,7 +58,7 @@ src/
       bannerRect.ts   find the "Choose a Hero" plate by colour (pure)
       tribeNames.ts   OCR text → race codes, fuzzy-matched (pure)
       shopSlots.ts    find tavern cards by their tier shields (pure)
-      gameWindow.ts   Hearthstone client rect via PowerShell GetClientRect
+      gameWindow.ts   Hearthstone client rect via user32 (koffi), converted to DIPs
   preload/index.ts    window.api
   renderer/src/
     main.tsx          app shell + all six pages
@@ -70,7 +70,9 @@ src/
   shared/types.ts     the main↔renderer contract
 ```
 
-One runtime dependency, `tesseract.js` (OCR for the tribe banner — see below).
+Two runtime dependencies: `tesseract.js` (OCR for the tribe banner — see below) and
+`koffi` (in-process user32 calls to find the game window; it replaced a PowerShell
+lookup that started the C# compiler every time).
 Everything else, React included, is a devDependency bundled at build time. No state
 library, no router, no CSS framework, no ORM.
 
@@ -153,16 +155,20 @@ misplaced ones.
 
 ## Builds flow
 
-1. **Hero picked.** `MULLIGAN_STATE = DONE` on your player entity (in Battlegrounds the
-   mulligan *is* the hero choice) sets `heroPicked`.
+1. **Hero picked.** `heroPicked` reads `MULLIGAN_STATE = DONE` on your player entity (in
+   Battlegrounds the mulligan *is* the hero choice) from state rather than waiting for
+   the tag change, so it also holds for a game replayed after a restart, or a log that
+   opens on a state dump.
 2. **Offer.** `buildsToOffer()` (exported from `tracker.ts`, tested) returns the builds
    whose `tribe` is in the lobby (or empty), but only after the hero pick, only in game,
    and never once answered or with a build already selected. That becomes
    `snapshot.buildPrompt`. It's withdrawn when combat starts, and the Tracker marks
    it answered, so a prompt left open into the first fight counts as "Not this game".
 3. **Answer.** `builds:select` → `Tracker.selectBuild(id | null)` marks it answered.
-   The selection is in memory and reset on `gameStart`; the Live page's "Going for"
-   selector can change it at any time.
+   The answer is saved to `build-choice.json` keyed to the game (log folder plus the
+   timestamped `CREATE_GAME` line), so a tracker restart mid-game replays into the same
+   key and restores it; a new game starts clean. The Live page's "Going for" selector
+   can change it at any time.
 4. **Follow.** The build overlay shows progress from `snapshot.board` and
    `snapshot.shop`; the highlight layer boxes wanted minions that are on offer and not
    already owned (goldens count as owned).

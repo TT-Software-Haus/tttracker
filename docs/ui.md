@@ -67,7 +67,8 @@ results; and average placement by dominant final-board tribe.
 logging enabled (with the **Enable logging** button → `fixLogConfig()`), reading the
 game log, card database loaded. Plus overlay toggles (enabled / odds / lobby / locked),
 opacity and scale sliders, and the `simIterations` slider. The overlay toggles include *Build sidebar (right)*
-(`showBuild`).
+(`showBuild`) and *Debug minion highlight* (`debugHighlights`), which boxes every
+tavern minion in purple to check box placement without waiting for a build's minion.
 
 ## Shared components — `components.tsx`
 
@@ -127,7 +128,8 @@ with `showBuild` on.
 are already in Hearthstone client-area coordinates. Main keeps this window sized
 exactly over the game's client area (`updateHighlightWindow`), is always
 click-through, unfocusable, and hidden whenever there are no boxes. It isn't a
-positionable overlay and ignores `locked`. See
+positionable overlay and ignores `locked`. Boxes flagged `debug` (from the
+*Debug minion highlight* setting) are drawn purple and steady instead of pulsing gold. See
 [architecture.md](architecture.md#screen-reading--srcmainvision) for where the boxes
 come from.
 

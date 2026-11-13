@@ -15,13 +15,18 @@ frame and a stubbed overlay.
 To test: pick a build with minions you'll actually see (**Murlocs - Keyword**
 has Kelp Keeper), wait for one to appear in the tavern, then check
 
-- [ ] a gold box appears, and on the **right** card — not offset, not one slot over
-- [ ] clicking through the box still buys the minion (the window is
+- [x] a gold box appears, and on the **right** card — not offset, not one slot over
+- [x] clicking through the box still buys the minion (the window is
       `setIgnoreMouseEvents(true)`, but that's untested over the live game)
 - [ ] it tracks a shop reroll, and disappears in combat
-- [ ] a tavern containing a **spell** doesn't shift the boxes — slots are matched
+- [x] a tavern containing a **spell** doesn't shift the boxes — slots are matched
       on `ZONE_POSITION` for exactly this reason, and it's the case most likely
       to be wrong
+
+Seen live 2026-11-13 (3840x2160, Drone Duplicator in slot 5, a spell in slot 6):
+right card, spell didn't shift it, clicking through bought it. The box was too
+short (cut through the attack/health gems); `CARD_ASPECT` changed 1.35 → 1.52
+from that frame, uncommitted until the reroll/combat check is done.
 
 If the boxes are offset, `findShopSlots` in `src/main/vision/shopSlots.ts` has
 `CARD_WIDTH` and `CARD_ASPECT` constants, and the measured numbers from a real
@@ -80,10 +85,6 @@ or it isn't caching and re-downloads 5 MB each launch. After the next hero selec
 Judgement calls made along the way. None are bugs; all are written down so the
 reasoning isn't lost.
 
-- **The selected build is in memory only.** Restarting the tracker mid-game
-  loses it. Persisting it properly means keying it to the game so the next one
-  doesn't inherit it — machinery for a problem that only shows up during
-  development. The Live-page selector covers recovery.
 - **Build codes address cards by list position**, so they'd break if the
   Battlegrounds minion list ever stopped growing only at the end. A checksum
   catches it and refuses the import rather than producing a plausible wrong
