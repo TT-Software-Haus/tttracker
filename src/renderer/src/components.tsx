@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { BoardMinion, CombatResult, LobbyPlayer, SimOdds } from '../../shared/types'
 import { reducedMotion, useAnimatedNumber, useChange, useFlip } from './anim'
-import { TRIBES, artUrl, ordinal, pct, placeColor, tribeLabel, type Session } from './lib'
+import { TRIBES, artUrl, cardTextParts, ordinal, pct, placeColor, tribeLabel, type Session } from './lib'
+
+/** Card text with Hearthstone's own keyword emphasis kept. */
+export function CardText({ text }: { text?: string }) {
+  const parts = cardTextParts(text)
+  if (!parts.length) return null
+  return (
+    <>
+      {parts.map((p, i) => {
+        const body = p.italic ? <i>{p.text}</i> : p.text
+        return p.bold ? <b key={i}>{body}</b> : <span key={i}>{body}</span>
+      })}
+    </>
+  )
+}
 
 /** A minion as a small card: art, tier pip, attack/health gems, keyword effects. */
 export function MinionCard({ m, size = 'md' }: { m: BoardMinion; size?: 'sm' | 'md' | 'lg' }) {

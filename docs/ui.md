@@ -80,6 +80,7 @@ opacity and scale sliders, and the `simIterations` slider. The overlay toggles i
 | `LobbyList` / `LobbyRow` | The leaderboard; FLIP-animated reordering, expandable last-known board, damage floats on health loss |
 | `TribeChips` | Coloured tribe chips (`--tc` custom property) |
 | `SessionStrip`, `Stat`, `Pill` | Session placements, big-number tiles, small pills |
+| `CardText` | Card text with Hearthstone's bold/italic emphasis kept (Minions page, picker, build tooltip) |
 
 `OddsBar` takes a `fightKey` so a mid-fight odds revision (a Duos teammate arriving)
 renders a ▲/▼ delta chip, while a *new* fight resets instead of showing a bogus delta.
@@ -100,11 +101,22 @@ the rest of the game. While it's up, main makes the odds window clickable regard
 the lock setting, and grows it (`growOddsForPrompt`) so the prompt doesn't push the
 odds out of view; both revert once it's answered, without touching saved bounds.
 
+**Picking a build from the overlays.** The lobby overlay shows **Pick a build** while
+`snap.buildPickable` is set (hero locked in, nothing chosen, no prompt up), and the build
+overlay has **Change** in its header. Either one swaps that overlay's content for
+`BuildPicker`: every saved build, this lobby's tribes first, plus Cancel. Locked
+overlays stay click-through; buttons and the picker use `useClickZone()`, which calls
+`setInteractive()` on pointer enter/leave so the window takes clicks only while the
+pointer is over them.
+
 **Build overlay** (`kind=build`) — right-hand sidebar for `snap.selectedBuild`: the
 current stage (the first whose `byTurn` hasn't passed, else the last), `have/total`,
 turns left or overdue, and each minion and addon ticked if owned or flagged *in shop*
 if it's in `snap.shop`. Logic is `buildProgress()` in `lib.ts`; goldens count as the
-minion. Hidden until a build is selected, even with `showBuild` on.
+minion. Hovering a row shows a tooltip with tier, tribes and `CardText`. It's
+positioned from the row's `offsetTop` against the card, not inside the scrolling list,
+and flips above rows in the card's lower half. Hidden until a build is selected, even
+with `showBuild` on.
 
 **Highlight layer** (`kind=slots`) — gold boxes drawn at `snap.shopHighlights`, which
 are already in Hearthstone client-area coordinates. Main keeps this window sized

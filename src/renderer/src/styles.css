@@ -1691,6 +1691,7 @@ a {
 
 /* Build sidebar: what you're aiming for, ticked off as it lands. */
 .ov-build {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1774,6 +1775,27 @@ a {
 }
 .build-share .btn {
   margin-top: 2px;
+}
+/* Minion detail on hover. Never takes the pointer, so moving onto it can't
+   flicker it away by leaving the row underneath. */
+.ov-tip {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  z-index: 2;
+  pointer-events: none;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(10, 12, 17, 0.97);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ov-tip-meta {
+  margin: 2px 0 4px;
+  color: var(--muted);
+  font-size: 11px;
 }
 .ov-build-sub {
   margin-top: 4px;

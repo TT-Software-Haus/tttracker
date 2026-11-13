@@ -263,7 +263,7 @@ it's set, reusing M7's `BuildPicker`.
 **Verify:** vitest for the show/hide condition, plus Playwright against the stubbed
 lobby overlay (declined → button → list → pick).
 
-### M9 — Minion detail on hover in the build sidebar
+### M9 — Minion detail on hover in the build sidebar ✅ done
 
 Tooltip on each target and addon row: tier, tribe(s) via `tribeLabel`, and card
 text via the existing `cardTextParts` (keeps Hearthstone's bold keywords).

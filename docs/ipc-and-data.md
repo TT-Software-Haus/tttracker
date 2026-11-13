@@ -32,6 +32,7 @@ Every `on*` returns an unsubscribe function, which the hooks return straight out
 | `settings()` | `settings:get` | invoke | → `Settings` |
 | `updateSettings(patch)` | `settings:update` | invoke | `Partial<Settings>` → merged `Settings` |
 | `openExternal(url)` | `app:openExternal` | invoke | `string` → `void` |
+| `setInteractive(on)` | `overlay:interactive` | invoke | `boolean` → `void` (overlays only) |
 
 Notes:
 
@@ -48,6 +49,10 @@ Notes:
   selected build reaches the overlays through the snapshot instead.
 - `builds:select` sets the game's build (`null` = dismiss the prompt with none) and
   marks the prompt answered. In memory only: a tracker restart mid-game forgets it.
+- `overlay:interactive` makes the *sending* overlay take clicks while `on`, even when
+  locked. Overlay buttons send it on pointer enter/leave (and on unmount); main keeps
+  a set of hovered windows and folds it into `updateOverlays()`, and forgets a window
+  when it's hidden.
 - `comps:addons` only accepts `https://hsreplay.net/battlegrounds/comps/…` URLs, since
   the renderer supplies the address.
 - `builds:export` / `builds:import` go through `buildCode.ts` in main because codes
@@ -78,13 +83,14 @@ Pure types, no runtime code. The contract between main, preload and renderer.
   placement?: number
   selectedBuild?: Build     // the build followed this game
   buildPrompt?: Build[]     // builds to offer; set after hero pick, cleared once answered
+  buildPickable?: boolean   // offer "Pick a build" on the lobby overlay (canPickBuild)
   shopHighlights: { x, y, width, height }[]  // Hearthstone client-area coords
 }
 ```
 
 `tribes` is the log's tribe list merged with the ones OCR'd off the hero-select
 screen (see [architecture.md](architecture.md#screen-reading--srcmainvision)).
-`selectedBuild`, `buildPrompt` and `shopHighlights` are filled in by `Tracker`, not
+`selectedBuild`, `buildPrompt`, `buildPickable` and `shopHighlights` are filled in by `Tracker`, not
 `BgGame` — they come from user choice and the screen, not the log.
 
 `status` and `phase` are independent axes — the UI combines them (e.g. "fighting" is

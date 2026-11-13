@@ -2,8 +2,8 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
 import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, Comp, SetupStatus } from '../../shared/types'
-import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips, segments } from './components'
-import { TRIBES, artUrl, buildsByLobby, cardTextParts, cardTextPlain, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { Board, CardText, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips, segments } from './components'
+import { TRIBES, artUrl, buildsByLobby, cardTextPlain, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
 type Page = 'live' | 'minions' | 'builds' | 'history' | 'stats' | 'settings'
 
@@ -354,20 +354,6 @@ function MinionsPage({ tribes }: { tribes: string[] }) {
         )
       })}
     </div>
-  )
-}
-
-/** Card text with Hearthstone's own keyword emphasis kept. */
-function CardText({ text }: { text?: string }) {
-  const parts = cardTextParts(text)
-  if (!parts.length) return null
-  return (
-    <>
-      {parts.map((p, i) => {
-        const body = p.italic ? <i>{p.text}</i> : p.text
-        return p.bold ? <b key={i}>{body}</b> : <span key={i}>{body}</span>
-      })}
-    </>
   )
 }
 
