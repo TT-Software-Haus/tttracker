@@ -2,6 +2,14 @@ import { promises as fs, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { BgMatch, Build, Settings } from '../shared/types'
 
+/** The build answer for one game, so a tracker restart mid-game keeps it. */
+export interface BuildChoice {
+  /** Identifies the game: log folder plus its CREATE_GAME line. */
+  game: string
+  buildId?: string
+  answered: boolean
+}
+
 const DEFAULT_SETTINGS: Settings = {
   hearthstonePath: '',
   simIterations: 5000,
@@ -42,12 +50,14 @@ export class Store {
   /** Position/size of each window, keyed by window name. */
   private boundsFile: JsonFile<Record<string, Electron.Rectangle>>
   private buildsFile: JsonFile<Build[]>
+  private choiceFile: JsonFile<BuildChoice>
 
   constructor(dir: string) {
     this.matchesFile = new JsonFile(join(dir, 'bg-matches.json'), [])
     this.settingsFile = new JsonFile(join(dir, 'settings.json'), DEFAULT_SETTINGS)
     this.boundsFile = new JsonFile(join(dir, 'windows.json'), {})
     this.buildsFile = new JsonFile(join(dir, 'builds.json'), [])
+    this.choiceFile = new JsonFile(join(dir, 'build-choice.json'), { game: '', answered: false })
     const s = this.settingsFile.value
     this.settingsFile.value = { ...DEFAULT_SETTINGS, ...s, overlay: { ...DEFAULT_SETTINGS.overlay, ...s.overlay } }
   }
@@ -81,6 +91,16 @@ export class Store {
     this.buildsFile.save()
   }
 
+  get buildChoice() {
+    return this.choiceFile.value
+  }
+
+  /** Only the latest game is kept: an older one can never be resumed. */
+  setBuildChoice(c: BuildChoice) {
+    this.choiceFile.value = c
+    this.choiceFile.save()
+  }
+
   deleteBuild(id: string) {
     this.buildsFile.value = this.builds.filter((b) => b.id !== id)
     this.buildsFile.save()
@@ -102,6 +122,6 @@ export class Store {
   }
 
   async flushAll() {
-    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile, this.buildsFile].map((f) => f.flush()))
+    await Promise.all([this.matchesFile, this.settingsFile, this.boundsFile, this.buildsFile, this.choiceFile].map((f) => f.flush()))
   }
 }

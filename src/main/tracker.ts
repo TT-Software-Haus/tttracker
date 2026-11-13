@@ -78,6 +78,10 @@ export class Tracker extends EventEmitter {
   private dirTimer?: NodeJS.Timeout
   private emitTimer?: NodeJS.Timeout
   private catchingUp = false
+  /** The raw log line being parsed, so a game can be identified by its CREATE_GAME line. */
+  private currentLine = ''
+  /** Identifies the current game across tracker restarts; see beginGame. */
+  private gameKey = ''
   /** The current game ended in the log before we started watching. */
   private endedDuringReplay = false
   private lastLineAt = Date.now()
@@ -94,7 +98,16 @@ export class Tracker extends EventEmitter {
   private lastSnapshot?: BgSnapshot
   /** Tribes read off the hero-select screen; merged with the ones the log reveals later. */
   private screenTribes: string[] = []
-  private heroPicked = false
+  /**
+   * In Battlegrounds the mulligan *is* the hero choice, so MULLIGAN_STATE=DONE
+   * means the hero is locked in, which is when a build becomes worth offering.
+   * Read from state rather than waiting for the tag to change: a log replayed
+   * after a tracker restart, or one that opens on a state dump (the fixture
+   * logs do), has the player DONE from their first line, with no change at all.
+   */
+  private get heroPicked() {
+    return this.game.playerEntity(this.game.friendlyPlayerId)?.tags.MULLIGAN_STATE === 'DONE'
+  }
   private selectedBuildId?: string
   /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
   private buildPromptAnswered = false
@@ -137,23 +150,15 @@ export class Tracker extends EventEmitter {
         this.stopTribeRead()
         this.stopHighlights()
         this.screenTribes = []
-        this.heroPicked = false
         this.selectedBuildId = undefined
         this.buildPromptAnswered = false
+        this.beginGame(`${this.logDir}|${this.currentLine}`)
       }
       // The minion-type banner is only on screen while you're choosing, so the
       // read starts when the heroes are offered — not at MULLIGAN_STATE=DONE,
       // which is the moment the screen is dismissed (measured on a real game:
       // heroes offered 11:19:59, DONE 11:21:08, first shop 0.4s after that).
       if (e.type === 'created' && e.entity.tags.BACON_HERO_CAN_BE_DRAFTED === '1' && !this.catchingUp) this.startTribeRead()
-      // In Battlegrounds the mulligan *is* the hero choice, so DONE means the
-      // hero is locked — which is when a build becomes worth offering.
-      if (e.type === 'tag' && e.tag === 'MULLIGAN_STATE' && e.value === 'DONE' && !this.heroPicked && !this.catchingUp) {
-        if (e.entity === this.game.playerEntity(this.game.friendlyPlayerId)) {
-          this.heroPicked = true
-          this.schedulePublish()
-        }
-      }
       if (e.type === 'gameEnd') {
         this.endedDuringReplay = this.catchingUp
         this.overSince = this.catchingUp ? 0 : Date.now()
@@ -202,7 +207,26 @@ export class Tracker extends EventEmitter {
   selectBuild(id: string | null) {
     this.selectedBuildId = id ?? undefined
     this.buildPromptAnswered = true
+    this.rememberChoice()
     this.publish()
+  }
+
+  /**
+   * A game has started, or is being replayed after a restart. Restarting the
+   * tracker mid-game used to lose the build being followed; the answer is now
+   * kept per game, keyed by the log folder (one per Hearthstone launch) and
+   * the timestamped CREATE_GAME line, which a replay sees again unchanged.
+   */
+  private beginGame(key: string) {
+    this.gameKey = key
+    const c = this.store.buildChoice
+    if (c.game !== key) return
+    this.selectedBuildId = c.buildId
+    this.buildPromptAnswered = c.answered
+  }
+
+  private rememberChoice() {
+    if (this.gameKey) this.store.setBuildChoice({ game: this.gameKey, buildId: this.selectedBuildId, answered: this.buildPromptAnswered })
   }
 
   // ------------------------------------------------------------- log plumbing
@@ -253,19 +277,25 @@ export class Tracker extends EventEmitter {
     // The replayed history is old: judge staleness by when the file was last written.
     this.lastLineAt = statSync(powerPath).mtimeMs
     this.powerTail = new LogTail(powerPath, (lines) => {
-      this.catchingUp = first
       if (!first) this.lastLineAt = Date.now()
+      this.ingest(lines, first)
       first = false
-      let changed = false
-      for (const l of lines) {
-        this.lookahead.handleLine(l)
-        changed = this.game.handleLine(l) || changed
-      }
-      this.catchingUp = false
-      if (changed) this.schedulePublish()
     })
     this.powerTail.start(offset)
     this.publish()
+  }
+
+  /** Feed log lines to both models. `catchingUp` marks the replay of a game already under way. */
+  private ingest(lines: string[], catchingUp: boolean) {
+    this.catchingUp = catchingUp
+    let changed = false
+    for (const l of lines) {
+      this.currentLine = l
+      this.lookahead.handleLine(l)
+      changed = this.game.handleLine(l) || changed
+    }
+    this.catchingUp = false
+    if (changed) this.schedulePublish()
   }
 
   /**
@@ -437,7 +467,10 @@ export class Tracker extends EventEmitter {
     // Reaching a fight after the hero pick answers the prompt, as if "Not this
     // game" had been clicked: it doesn't come back next shop, and the lobby
     // overlay offers "Pick a build" instead.
-    if (inCombat && this.heroPicked) this.buildPromptAnswered = true
+    if (inCombat && this.heroPicked && !this.buildPromptAnswered) {
+      this.buildPromptAnswered = true
+      this.rememberChoice()
+    }
     const buildPickable = canPickBuild(this.store.builds, buildPrompt, {
       heroPicked: this.heroPicked,
       hasSelection: !!selectedBuild,
