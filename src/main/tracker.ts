@@ -119,7 +119,22 @@ export class Tracker extends EventEmitter {
 
   // ------------------------------------------------------------- log plumbing
 
+  /**
+   * Re-read the logging config and republish if the answer moved. The config can
+   * change under us at any time — our own repair during start(), the Setup page,
+   * a new install path, or the user editing log.config by hand — and a stale
+   * `setup-needed` snapshot leaves the banner up for good, since nothing else
+   * recomputes it.
+   */
+  private async refreshLogConfig() {
+    const ok = await checkLogConfig(this.store.settings.hearthstonePath)
+    if (ok === this.logConfigOk) return
+    this.logConfigOk = ok
+    this.publish()
+  }
+
   private async attachToLogs() {
+    await this.refreshLogConfig()
     const dir = await findActiveLogDir(this.store.settings.hearthstonePath)
     if (dir !== this.logDir) {
       // New Hearthstone session: everything from the old log is stale.
@@ -216,7 +231,7 @@ export class Tracker extends EventEmitter {
 
   async setupStatus(): Promise<SetupStatus> {
     const path = this.store.settings.hearthstonePath
-    this.logConfigOk = await checkLogConfig(path)
+    await this.refreshLogConfig()
     return {
       hearthstonePath: path,
       installFound: installLooksValid(path),
@@ -231,8 +246,7 @@ export class Tracker extends EventEmitter {
 
   async fixLogConfig() {
     await ensureLogConfig(this.store.settings.hearthstonePath)
-    this.logConfigOk = await checkLogConfig(this.store.settings.hearthstonePath)
-    this.publish()
+    await this.refreshLogConfig()
   }
 
   async setInstallPath(path: string) {
