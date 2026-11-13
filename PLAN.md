@@ -14,8 +14,6 @@ Branch: `feature/builds`, forked from `develop`.
   targets ordered by turn, max 7 minions each.
 - Prompt fires **after hero pick**, lists builds whose `tribe` is in the lobby,
   is dismissable, and the build is also selectable manually.
-- Prompt fires **after hero pick**, lists builds whose `tribe` is in the lobby,
-  is dismissable, and the build is also selectable manually.
 - Prompt renders **in the overlay**, over the game.
 - "Highlight minions" is built two ways (user asked for both): shop-offer
   flagging from the log, *and* geometric highlight boxes drawn over the real
@@ -24,9 +22,10 @@ Branch: `feature/builds`, forked from `develop`.
   real game: zero pool-minion markers appear before the hero is locked in, and
   only 5 of 7 tribes are known by round 1 (ELEMENTAL not until round 2). The
   hero-select screen shows them all up front, so that's where they come from.
-  No OpenCV dependency: `desktopCapturer` → `nativeImage.toBitmap()` → raw
-  RGBA, matched against 11 reference crops. `matchTemplate` is the documented
-  upgrade path if plain matching proves fragile across resolutions.
+  Done with `desktopCapturer` + `tesseract.js`, not OpenCV: a real frame showed
+  the banner is *text* in Hearthstone's font, so there are no icons to template
+  match. (The tribe icons on streamers' screens are HDT's overlay, not the
+  game.) `tesseract.js` is the project's one runtime dependency.
 
 ## Milestones
 
@@ -40,7 +39,7 @@ target rows (`by turn N` + minion picker reusing `usePool()` and `MinionCard`).
 
 **Verify:** create a build, restart the app, it's still there; delete works.
 
-### M2 — Reading the lobby's tribes off the hero-select screen
+### M2 — Reading the lobby's tribes off the hero-select screen ✅ done
 
 `src/main/vision/`. `desktopCapturer` grabs the Hearthstone window, the banner
 is cropped from a window-relative rect, and `tesseract.js` OCRs it; each token
@@ -55,20 +54,10 @@ Trigger: the friendly player's `MULLIGAN_STATE` hits `DONE` (in Battlegrounds
 the mulligan *is* the hero choice — verified against a real log: `CREATE_GAME`
 at line 256, `MULLIGAN_STATE=DONE` at 1,774, first shop at 2,059).
 
-**Risks:** the strip's position varies with resolution and UI scale, so this
-needs the same calibration knob as M6 — build it once, share it. Fullscreen vs
-windowed capture differs. If matching is unreliable, fall back to the log's
-accumulating tribe list rather than prompting on a wrong read.
+No calibration knob in the end: the plate is found by colour at run time, so
+resolution, aspect and UI scale don't need configuring.
 
-**Verify:** capture a real hero-select frame, assert the matcher returns the
-tribes actually on screen.
-
-**Status: verified against a real frame.** A live 2560x1440 hero-select capture
-(ground truth: Beasts, Dragons, Elementals, Mechs, Murlocs) is read correctly
-by the production code path — `findBannerRect` locates the plate at
-`{1256, 298, 1230, 135}` and the OCR returns all five.
-
-Three things that frame overturned:
+**What real frames overturned, in order:**
 
 1. **The fixed rect was wrong and the idea was wrong.** The banner sat 640px
    right of where centring predicts. Replaced by colour detection.
@@ -77,15 +66,19 @@ Three things that frame overturned:
    0.4s later. Now starts when heroes are offered and retries across the ~70s
    window.
 3. **Tesseract's layout guesser is not deterministic enough to rely on.** A
-   one-pixel change in the crop lost a tribe. Fixed with `PSM.SPARSE_TEXT` and
-   a character whitelist; every crop from the detected box out to a 1920x245
-   band now reads all five.
+   one-pixel change in the crop lost a tribe. A character whitelist helped, but
+   no single segmentation mode proved reliable — see below.
 
-**Outstanding:** only a second frame at a different resolution, to confirm the
-colour thresholds generalise. Failure stays inert — an empty read falls back to
-the log's tribe list.
+**Closed against two live resolutions.** 4K read all five tribes first time.
+1080p lost one — "Dragons, Murlocs, Pir" — which turned out to be two separate
+faults: the gold emblems sitting on the plate were inside the crop (fixed by
+tightening onto text-coloured pixels, blue well above green, where the emblems
+are almost blue-free), and tesseract's segmentation mode, where neither
+available mode is reliable alone. Both modes now run and merge. The poller also
+accumulates across attempts rather than keeping its first answer. Failure stays
+inert — an empty read falls back to the log's tribe list.
 
-### M3 — Selecting a build, and the post-hero-pick prompt
+### M3 — Selecting a build, and the post-hero-pick prompt ✅ done
 
 Tracker holds `selectedBuildId` for the current game, cleared on game end.
 `BgSnapshot` gains `buildPrompt?: Build[]` (populated once, when the hero is
@@ -98,14 +91,15 @@ answer/dismiss.
 **Verify:** replay a fixture log through the tracker with a matching build
 configured; prompt appears once, selection sticks, clears on game over.
 
-**Status: code complete, needs one live game.** Verified: the offer gate
+**Closed in a live game:** the prompt appeared after the hero was locked in
+and was clickable over Hearthstone, which confirms the `setIgnoreMouseEvents`
+dance — the one thing no amount of offline testing could show. Also verified:
+the offer gate
 (`buildsToOffer`, 8 tests — won't fire before hero pick, after an answer, out
 of game, or with no tribe match), and the overlay prompt driven in Playwright
 (both builds render, the lobby overlay correctly ignores it, clicks dispatch
 `b1` then `null`, and it fits the 440×170 default window with no overflow).
-**Outstanding:** that the odds overlay actually becomes clickable mid-game —
-`setIgnoreMouseEvents(false)` while a prompt is up can only be tested against
-a real game. Same live session as M2's calibration.
+
 
 ### M3.5 — "Find build": import from HSReplay's comps ✅ done
 
@@ -122,9 +116,12 @@ Why it works the way it does:
   and gets a 200, so no hidden BrowserWindow is needed.
 - **No scraping.** The page server-renders everything into
   `<script id="react_context">`, so it's one regex and a `JSON.parse`.
-- **Detail pages are unreachable** — they return a Cloudflare interstitial even
-  in a real browser — so the import is name + tribe + core minions. There is no
-  turn guidance in the data; the stage turn is a default you're meant to edit.
+- **Detail pages are reachable after all.** I first recorded them as blocked,
+  on the strength of Playwright hitting a Cloudflare interstitial. Electron's
+  `net` returns 200 for them too, and they carry `comp_addon_cards`, which the
+  list page doesn't — so addons are prefilled, fetched when a comp is actually
+  used rather than 33 times on open. There is still no turn guidance in the
+  data ("when to commit" is prose), so the stage turn stays a default.
 - `comp_core_cards` are dbfIds, which `CardDb.byDbfId` already resolves.
 - Comp names read "Quilboar - APM Shop Buff", so the tribe comes from the same
   word-matching table the OCR uses. "Menagerie" is the one comp with no tribe,
