@@ -3,6 +3,7 @@ import { PSM, createWorker, type Worker } from 'tesseract.js'
 import { parseTribeBanner } from './tribeNames'
 import { findBannerRect, type Rect } from './bannerRect'
 import { findShopSlots } from './shopSlots'
+import { captureFrame } from './stream'
 
 let worker: Worker | undefined
 
@@ -94,14 +95,13 @@ export interface ShopGeometry {
  * Locate the tavern's cards on screen.
  *
  * Returns frame-space rects; the caller scales them to the window, because the
- * capture is resized to a fixed height and is rarely 1:1 with the real window.
+ * frame is captured at a fixed height and is rarely 1:1 with the real window.
+ * 720 high: the shields are found just as well as at 4K (real frames scaled
+ * down agreed to 3px), at a quarter of the pixels.
  */
 export async function readShopSlots(): Promise<ShopGeometry | undefined> {
-  // Small: this runs every second or two through a shop phase, and the shields
-  // are found just as well at 720p (real 4K frames scaled down agreed to 3px).
-  const shot = await captureGameWindow({ width: 1280, height: 720 })
-  if (!shot) return undefined
-  const { width, height } = shot.getSize()
-  const slots = findShopSlots(shot.toBitmap(), width, height)
-  return slots.length ? { slots, frame: { width, height } } : undefined
+  const frame = await captureFrame(720)
+  if (!frame) return undefined
+  const slots = findShopSlots(frame.bgra, frame.width, frame.height)
+  return slots.length ? { slots, frame: { width: frame.width, height: frame.height } } : undefined
 }

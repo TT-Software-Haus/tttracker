@@ -11,8 +11,10 @@ vi.mock('../src/main/vision/heroSelect', () => ({
   stopVision: async () => {},
   readShopSlots: async () => (screen.slots.length ? { slots: screen.slots, frame: { width: 1000, height: 500 } } : undefined),
 }))
+// Fullscreen by default: the capture covers exactly the client area.
+const game = { rect: { x: 0, y: 0, width: 1000, height: 500, captured: { x: 0, y: 0, width: 1000, height: 500 } } }
 vi.mock('../src/main/vision/gameWindow', () => ({
-  getGameWindowRect: async () => ({ x: 0, y: 0, width: 1000, height: 500 }),
+  getGameWindowRect: async () => game.rect,
 }))
 
 /**
@@ -28,6 +30,7 @@ describe('highlight boxes over the tavern', () => {
   const slot = (x: number) => ({ x, y: 100, width: 80, height: 120 })
   let root: string
   let tracker: any // private members are what's under test
+  let logSize: number | undefined
 
   beforeEach(async () => {
     vi.useFakeTimers()
@@ -36,6 +39,9 @@ describe('highlight boxes over the tavern', () => {
     const { Tracker } = await import('../src/main/tracker')
     tracker = new Tracker(new Store(root), join(root, 'carddata'))
     tracker.publish = () => {}
+    // The log's tavern size, spells included. Defaults to what the screen shows.
+    logSize = undefined
+    tracker.bg.tavernSize = () => logSize ?? screen.slots.length
   })
   afterEach(async () => {
     tracker.stop()
@@ -68,6 +74,48 @@ describe('highlight boxes over the tavern', () => {
     expect(tracker.highlights).toEqual([])
     await vi.advanceTimersByTimeAsync(1000)
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([200])
+  })
+
+  it('draws nothing while the screen and the log disagree on how many cards there are', async () => {
+    // Seen live: a box on a spell. A missed end shield shifts every slot one
+    // over; the slot count is the giveaway.
+    logSize = 4 // three minions and a spell
+    screen.slots = [slot(200), slot(300), slot(400)] // first shield missed
+    tracker.refreshHighlights(base([minion('A', 1), minion('B', 2), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(tracker.highlights).toEqual([])
+    screen.slots = [slot(100), slot(200), slot(300), slot(400)]
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
+  })
+
+  it('waits for the cards to finish sliding after a purchase', async () => {
+    logSize = 3
+    screen.slots = [slot(100), slot(200), slot(300)]
+    tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 2), minion('C', 3)]), build)
+    await vi.advanceTimersByTimeAsync(600)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([200])
+    // Bought A: the log says two cards at once, the screen still shows three.
+    logSize = 2
+    tracker.refreshHighlights(base([minion('BRANN', 1), minion('C', 2)]), build)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights).toEqual([])
+    screen.slots = [slot(150), slot(250)] // settled, re-centred
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([150])
+  })
+
+  it('maps boxes into the client area when the capture includes a title bar', async () => {
+    // Windowed, as measured live: the captured frame is a bit bigger than the
+    // client area and starts above it (title bar) and just left of it.
+    game.rect = { x: 100, y: 100, width: 1000, height: 500, captured: { x: 99, y: 70, width: 1002, height: 530 } }
+    screen.slots = [slot(100), slot(200), slot(300)] // frame is 1000x500
+    tracker.refreshHighlights(base([minion('A', 1), minion('B', 2), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(600)
+    const [box] = tracker.highlights
+    // Frame x 300 -> 300 * 1002/1000 - 1 = 300 (rounded); y 100 -> 100 * 530/500 - 30 = 76.
+    expect(box).toMatchObject({ x: 300, y: 76, width: 80, height: 127 })
+    game.rect = { x: 0, y: 0, width: 1000, height: 500, captured: { x: 0, y: 0, width: 1000, height: 500 } }
   })
 
   it('tries again when a read finds no tavern', async () => {

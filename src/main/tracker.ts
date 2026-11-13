@@ -8,6 +8,7 @@ import { BgGame } from './bg/bgGame'
 import { checkLogConfig, ensureLogConfig, findActiveLogDir, findInstallPath, installLooksValid, logConfigPath } from './logs/hsPaths'
 import { LogTail, lastGameOffset } from './logs/logTail'
 import { readLobbyTribes, readShopSlots, stopVision } from './vision/heroSelect'
+import { stopCapture } from './vision/stream'
 import { getGameWindowRect } from './vision/gameWindow'
 import type { Store } from './store'
 import type { BgSnapshot, BoardMinion, Build, SetupStatus } from '../shared/types'
@@ -389,13 +390,24 @@ export class Tracker extends EventEmitter {
       const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
       // A failed read leaves no boxes, and the next pass tries again.
       if (!geo || !win || key !== this.highlightKey) return
-      // The capture is resized, so frame coordinates need scaling to the
-      // window's client area before they mean anything on screen.
-      const sx = win.width / geo.frame.width
-      const sy = win.height / geo.frame.height
+      // Boxes are matched to cards by slot number, so the screen has to show
+      // the same number of cards as the log, spells included. Seen live, a box
+      // landed on a spell: a missed end shield shifts every slot one over, and
+      // after a purchase the log updates at once while the cards are still
+      // sliding. Either way, wait for a read where they agree.
+      if (geo.slots.length !== this.bg.tavernSize()) return
+      // The frame is the captured part of the window, resized; the boxes are
+      // drawn over the client area. So scale by the captured size, then shift
+      // by where the client area sits inside it: in windowed mode the frame
+      // includes the title bar (seen live: boxes a title bar too high), in
+      // fullscreen the two are the same and the shift is zero.
+      const sx = win.captured.width / geo.frame.width
+      const sy = win.captured.height / geo.frame.height
+      const ox = win.captured.x - win.x
+      const oy = win.captured.y - win.y
       const boxes = targets.flatMap((m) => {
         const r = geo.slots[(m.pos ?? 0) - 1]
-        return r ? [{ x: Math.round(r.x * sx), y: Math.round(r.y * sy), width: Math.round(r.width * sx), height: Math.round(r.height * sy), ...(m.debug && { debug: true }) }] : []
+        return r ? [{ x: Math.round(r.x * sx + ox), y: Math.round(r.y * sy + oy), width: Math.round(r.width * sx), height: Math.round(r.height * sy), ...(m.debug && { debug: true }) }] : []
       })
       if (JSON.stringify(boxes) === JSON.stringify(this.highlights)) return
       this.highlights = boxes
@@ -404,11 +416,16 @@ export class Tracker extends EventEmitter {
       console.warn('could not locate the tavern on screen', err)
     } finally {
       if (this.highlightTargets.length) this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_POLL_MS)
-      else this.highlightLoop = false
+      else {
+        this.highlightLoop = false
+        // Nothing left to box: close the stream until the next shop needs it.
+        stopCapture()
+      }
     }
   }
 
   private stopHighlights() {
+    if (this.highlightLoop) stopCapture()
     if (this.highlightTimer) clearTimeout(this.highlightTimer)
     this.highlightTimer = undefined
     this.highlightLoop = false

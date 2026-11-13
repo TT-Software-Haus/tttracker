@@ -442,6 +442,24 @@ export class BgGame {
    * Only ever call this during 'shop'. The IS_BACON_POOL_MINION filter keeps
    * out anything in that slot that isn't a tavern minion.
    */
+  /**
+   * How many cards are on offer in the tavern, spells included. Checked
+   * against a live log: tavern spells (CARDTYPE BATTLEGROUND_SPELL) sit in the
+   * same PLAY zone as the offered minions, each with its own ZONE_POSITION.
+   * The highlight boxes use this to check the screen agrees before drawing.
+   */
+  tavernSize(): number {
+    const dummy = this.dummyPlayerId()
+    if (dummy === undefined) return 0
+    return [...this.game.entities.values()].filter(
+      (e) =>
+        e.tags.ZONE === 'PLAY' &&
+        (e.tags.CARDTYPE === 'MINION' || e.tags.CARDTYPE === 'BATTLEGROUND_SPELL') &&
+        Number(e.tags.ZONE_POSITION ?? 0) > 0 &&
+        this.game.controllerOf(e) === dummy,
+    ).length
+  }
+
   private shopMinions(): BoardMinion[] {
     return this.minionEntities(this.dummyPlayerId())
       .filter((e) => e.tags.IS_BACON_POOL_MINION === '1')

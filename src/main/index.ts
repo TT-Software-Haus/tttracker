@@ -4,6 +4,7 @@ import { Store } from './store'
 import { Tracker } from './tracker'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
+import { initCapture } from './vision/stream'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
@@ -113,6 +114,20 @@ function createHighlightWindow() {
   // never take a click meant for the game.
   highlightWin.setIgnoreMouseEvents(true, { forward: true })
   loadPage(highlightWin, 'overlay', '?kind=slots')
+}
+
+/**
+ * Never shown: it streams the Hearthstone window for the screen reading in
+ * vision/. Background throttling would starve a hidden window's video.
+ */
+function createCaptureWindow() {
+  const win = new BrowserWindow({
+    show: false,
+    skipTaskbar: true,
+    webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false },
+  })
+  loadPage(win, 'overlay', '?kind=capture')
+  initCapture(win)
 }
 
 /**
@@ -279,6 +294,7 @@ app.whenReady().then(async () => {
   createOverlay('lobby')
   createOverlay('build')
   createHighlightWindow()
+  createCaptureWindow()
   await tracker.start()
   broadcast('data:changed')
   updateOverlays()
