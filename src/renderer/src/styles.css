@@ -1042,11 +1042,14 @@ a {
   margin: 0 0 8px;
 }
 .build-picker-grid {
+  /* One tier per row — the children are tier blocks now, not loose cards. */
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  max-height: 260px;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 420px;
   overflow-y: auto;
+  /* Room for the sticky tier headers to sit against. */
+  padding-right: 4px;
 }
 
 /* ------------------------------------------------------------------ history */
@@ -1804,4 +1807,54 @@ a {
 .build-bar .input {
   width: auto;
   min-width: 260px;
+}
+
+/* Minion picker: tribe tabs, a hover preview, and every tier. */
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.picker-head .input.search {
+  width: auto;
+  flex: 1;
+  margin: 0;
+}
+.picker-tribes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0;
+}
+.picker-preview {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 34px;
+  padding: 6px 8px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+}
+.picker-tier + .picker-tier {
+  margin-top: 10px;
+}
+.picker-tier-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  /* Keeps the tier you're scrolling through labelled. */
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 4px 0;
+  background: var(--bg-2);
+}
+.picker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }

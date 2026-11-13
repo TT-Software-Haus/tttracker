@@ -358,8 +358,17 @@ function MinionsPage({ tribes }: { tribes: string[] }) {
   )
 }
 
+/** Card text with Hearthstone's markup stripped. */
+function cardText(c: CardInfo) {
+  return (c.text ?? '')
+    .replace(/<\/?[a-z]+>/gi, '')
+    .replace(/\[x\]/g, '')
+    .replace(/\n/g, ' ')
+    .trim()
+}
+
 function PoolCard({ c }: { c: CardInfo }) {
-  const text = (c.text ?? '').replace(/<\/?[a-z]+>/gi, '').replace(/\[x\]/g, '').replace(/\n/g, ' ')
+  const text = cardText(c)
   return (
     <div className="pool-card">
       <div className="pool-art" style={{ backgroundImage: `url(${artUrl(c.id)})` }}>
@@ -558,28 +567,70 @@ function FindBuild({ onUse }: { onUse: (c: Comp) => Promise<void> }) {
 
 /** Shared by the stage rows and the addons row. */
 function Picker({ build, pool, query, setQuery, onPick }: { build: Build; pool: CardInfo[]; query: string; setQuery: (q: string) => void; onPick: (c: CardInfo) => void }) {
-  // Minions you could actually build with: this tribe, plus neutrals. An
-  // "any tribe" build has no filter to apply, so it sees everything.
+  // Starts on the build's own tribe, but a build is rarely one tribe all the
+  // way up — you tech in a Brann or a Baron — so the tribe is switchable here
+  // without touching what the build is *for*.
+  const [tribe, setTribe] = useState(build.tribe)
+  const [hovered, setHovered] = useState<CardInfo>()
+
   const candidates = useMemo(
     () =>
       pool
-        .filter((c) => !build.tribe || !c.races?.length || c.races.includes('ALL') || c.races.includes(build.tribe))
-        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()))
-        .sort((a, b) => (a.techLevel ?? 0) - (b.techLevel ?? 0) || a.name.localeCompare(b.name))
-        .slice(0, 48),
-    [pool, build.tribe, query],
+        .filter((c) => !tribe || !c.races?.length || c.races.includes('ALL') || c.races.includes(tribe))
+        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()) || (c.text ?? '').toLowerCase().includes(query.toLowerCase()))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [pool, tribe, query],
   )
+  // Grouped by tier and uncapped: the old 48-card limit quietly stopped at
+  // tier 2, so two thirds of the pool — every tier 7 — could not be picked.
+  const tiers = [1, 2, 3, 4, 5, 6, 7].map((t) => [t, candidates.filter((c) => c.techLevel === t)] as const).filter(([, cs]) => cs.length)
+
   return (
     <div className="build-picker">
-      <input className="input search" autoFocus placeholder={`Search ${build.tribe ? tribeLabel(build.tribe) + ' and neutral' : 'all'} minions…`} value={query} onChange={(e) => setQuery(e.target.value)} />
-      {!pool.length && <div className="muted small">Loading card data…</div>}
-      <div className="build-picker-grid">
-        {candidates.map((c) => (
-          <button key={c.id} className="build-minion" title={c.name} style={{ backgroundImage: `url(${artUrl(c.id)})` }} onClick={() => onPick(c)}>
-            <span>
-              ★{c.techLevel} {c.name}
-            </span>
+      <div className="picker-head">
+        <input className="input search" autoFocus placeholder="Search name or text…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <span className="muted small">{candidates.length} minions</span>
+      </div>
+      <div className="picker-tribes">
+        <button className={`tribe tribe-btn ${tribe ? 'tribe-off' : ''}`} onClick={() => setTribe('')}>
+          All
+        </button>
+        {Object.keys(TRIBES).map((t) => (
+          <button key={t} className={`tribe tribe-btn ${tribe === t ? '' : 'tribe-off'}`} style={{ ['--tc' as string]: TRIBES[t].color }} onClick={() => setTribe(t)}>
+            {tribeLabel(t)}
           </button>
+        ))}
+      </div>
+      <div className="picker-preview">
+        {hovered ? (
+          <>
+            <b>{hovered.name}</b>
+            <span className="muted small">
+              ★{hovered.techLevel} · {hovered.attack}/{hovered.health}
+              {hovered.races?.length ? ` · ${hovered.races.map((r) => (r === 'ALL' ? 'All' : tribeLabel(r))).join(', ')}` : ''}
+            </span>
+            <span className="small">{cardText(hovered) || 'No card text.'}</span>
+          </>
+        ) : (
+          <span className="muted small">Hover a minion to read it.</span>
+        )}
+      </div>
+      {!pool.length && <div className="muted small">Loading card data…</div>}
+      <div className="build-picker-grid" onMouseLeave={() => setHovered(undefined)}>
+        {tiers.map(([tier, cards]) => (
+          <div key={tier} className="picker-tier">
+            <div className="picker-tier-head">
+              <span className="tier-star">★{tier}</span>
+              <span className="muted small">{cards.length}</span>
+            </div>
+            <div className="picker-row">
+              {cards.map((c) => (
+                <button key={c.id} className="build-minion" style={{ backgroundImage: `url(${artUrl(c.id)})` }} onMouseEnter={() => setHovered(c)} onFocus={() => setHovered(c)} onClick={() => onPick(c)}>
+                  <span>{c.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
     </div>
