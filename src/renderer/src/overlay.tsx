@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent } from 'react'
 import './styles.css'
 import { CardText, HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
-import { TRIBES, artUrl, buildProgress, buildsByLobby, currentSession, sortedTargets, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, buildProgress, buildsByLobby, parseCardLinks, currentSession, sortedTargets, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 import type { BgSnapshot, Build, CardInfo } from '../../shared/types'
 
 const param = new URLSearchParams(location.search).get('kind')
@@ -150,6 +150,7 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const build = snap.selectedBuild
   const pool = usePool()
   const cards = useMemo(() => new Map(pool.map((c) => [c.id, c])), [pool])
+  const byDbf = useMemo(() => new Map(pool.map((c) => [c.dbfId, c])), [pool])
   const [picking, setPicking] = useState(false)
   const [tip, setTip] = useState<{ card: CardInfo; style: CSSProperties }>()
   if (!build) return null
@@ -158,30 +159,28 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   if (!p) return null
   const done = p.have === p.minions.length
   /**
-   * The list scrolls, so a tooltip inside a row would be clipped. It hangs off
-   * the card instead, placed from the row's layout offset rather than its
-   * screen rect, which keeps it right under the overlay's `zoom` scale.
-   * Rows in the lower half of the card get it above them, so it stays in view.
+   * Card detail for a minion row or a card named in the description. The
+   * tooltip lives in the card (the scroll container), placed from the hovered
+   * element's layout offset rather than its screen rect, which keeps it right
+   * under the overlay's `zoom` scale. Anything in the lower half of the visible
+   * card gets it above, via a transform, since its own height isn't known yet.
    */
-  const showTip = (e: MouseEvent<HTMLElement>, cardId: string) => {
-    const card = cards.get(cardId)
-    const row = e.currentTarget
-    const list = row.parentElement
-    const box = row.closest<HTMLElement>('.ov-build')
-    if (!card || !list || !box) return setTip(undefined)
-    const y = row.offsetTop - list.scrollTop
-    const below = y + row.offsetHeight / 2 < box.offsetHeight / 2
-    setTip({ card, style: below ? { top: y + row.offsetHeight + 4 } : { bottom: box.offsetHeight - y + 4 } })
+  const showTip = (e: MouseEvent<HTMLElement>, card: CardInfo | undefined) => {
+    const el = e.currentTarget
+    const box = el.closest<HTMLElement>('.ov-build')
+    if (!card || !box) return setTip(undefined)
+    const below = el.offsetTop - box.scrollTop + el.offsetHeight / 2 < box.clientHeight / 2
+    setTip({ card, style: below ? { top: el.offsetTop + el.offsetHeight + 4 } : { top: el.offsetTop - 4, transform: 'translateY(-100%)' } })
   }
   const row = (m: (typeof p.minions)[number], key: string) => (
-    <div key={key} className={`ov-build-minion ${m.have ? 'have' : ''} ${m.inShop ? 'in-shop' : ''}`} onMouseEnter={(e) => showTip(e, m.cardId)} onMouseLeave={() => setTip(undefined)}>
+    <div key={key} className={`ov-build-minion ${m.have ? 'have' : ''} ${m.inShop ? 'in-shop' : ''}`} onMouseEnter={(e) => showTip(e, cards.get(m.cardId))} onMouseLeave={() => setTip(undefined)}>
       <span className="ov-build-art" style={{ backgroundImage: `url(${artUrl(m.cardId)})` }} />
       <span className="ov-build-name">{cards.get(m.cardId)?.name ?? m.cardId}</span>
       {m.have ? <span className="ov-build-tick">✓</span> : m.inShop ? <span className="ov-build-shop">in shop</span> : null}
     </div>
   )
   return (
-    <div className="ov-card ov-build">
+    <div className="ov-card ov-build" onScroll={() => setTip(undefined)}>
       <div className="ov-head">
         <b>{build.name}</b>
         <span className="muted small">
@@ -194,7 +193,7 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
       <div className={`ov-build-turn ${!done && p.turnsLeft < 0 ? 'danger' : ''}`}>
         {done ? 'Stage complete' : p.turnsLeft > 0 ? `by turn ${p.stage.byTurn} · ${p.turnsLeft} to go` : p.turnsLeft === 0 ? `by turn ${p.stage.byTurn} · this turn` : `${-p.turnsLeft} turn${p.turnsLeft === -1 ? '' : 's'} overdue`}
       </div>
-      <div className="ov-build-list" onScroll={() => setTip(undefined)}>
+      <div className="ov-build-list">
         {p.minions.map((m, i) => row(m, `${m.cardId}-${i}`))}
         {p.addons.length > 0 && (
           <>
@@ -203,6 +202,22 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
           </>
         )}
       </div>
+      {build.description && (
+        <div className="ov-build-desc">
+          <div className="ov-build-sub">How to play</div>
+          <p>
+            {parseCardLinks(build.description).map((part, i) => {
+              if (part.dbfId === undefined) return <span key={i}>{part.text}</span>
+              const card = byDbf.get(part.dbfId)
+              return (
+                <b key={i} className={card ? 'ov-card-link' : undefined} onMouseEnter={(e) => showTip(e, card)} onMouseLeave={() => setTip(undefined)}>
+                  {part.text}
+                </b>
+              )
+            })}
+          </p>
+        </div>
+      )}
       {tip && (
         <div className="ov-tip" style={tip.style}>
           <b>{tip.card.name}</b>

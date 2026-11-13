@@ -114,9 +114,13 @@ pointer is over them.
 current stage (the first whose `byTurn` hasn't passed, else the last), `have/total`,
 turns left or overdue, and each minion and addon ticked if owned or flagged *in shop*
 if it's in `snap.shop`. Logic is `buildProgress()` in `lib.ts`; goldens count as the
-minion. Hovering a row shows a tooltip with tier, tribes and `CardText`. It's
-positioned from the row's `offsetTop` against the card, not inside the scrolling list,
-and flips above rows in the card's lower half. Hidden until a build is selected, even
+minion. Below them, under "How to play", is `build.description` in full. Its
+`[[Name||dbfId]]` links (from HSReplay) are split by `parseCardLinks()` and render
+bold, gold when the card resolves. The whole card scrolls rather than just the list,
+so a long guide can't squeeze the minions out. Hovering a row, or a resolved card name
+in the description, shows a tooltip with tier, tribes and `CardText`. It's positioned
+from the hovered element's `offsetTop` inside the card (the scroll container), and goes
+above (via `translateY(-100%)`) for anything in the visible card's lower half. Hidden until a build is selected, even
 with `showBuild` on.
 
 **Highlight layer** (`kind=slots`) — gold boxes drawn at `snap.shopHighlights`, which

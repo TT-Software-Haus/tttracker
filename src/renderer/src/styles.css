@@ -1696,6 +1696,23 @@ a {
   flex-direction: column;
   gap: 6px;
   max-height: calc(100vh - 20px);
+  /* The whole card scrolls rather than just the list, so a long How to Play
+     can't squeeze the minions out of view. */
+  overflow-y: auto;
+}
+.ov-build > * {
+  flex: none;
+}
+.ov-build-desc p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  /* Typed descriptions keep their line breaks. */
+  white-space: pre-line;
+}
+.ov-card-link {
+  color: var(--accent);
+  cursor: default;
 }
 .ov-build .ov-head .muted {
   margin-left: auto;
@@ -1708,7 +1725,6 @@ a {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  overflow-y: auto;
 }
 .ov-build-minion {
   display: flex;

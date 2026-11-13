@@ -385,6 +385,7 @@ an unsubscribe function.
 | `useBuilds()` | `(): readonly [Build[], save: (Build) => void, remove: (string) => void]` | Optimistic local state; persists via IPC |
 | `usePool()` | `(): CardInfo[]` | Module-level promise cache, cleared if empty |
 | `buildsByLobby(builds, tribes)` | `→ readonly [relevant, rest]` | Builds for this lobby's tribes (or tribeless) first; used by `BuildBar` and `BuildPicker` |
+| `parseCardLinks(text)` | `(string): { text, dbfId? }[]` | Splits HSReplay's `[[Name\|\|dbfId]]` card links out of a description |
 | `sortedTargets(b)` | `(Build): BuildTarget[]` | Earliest `byTurn` first, copied |
 | `buildProgress(build, round, board, shop?)` | `→ { stage, minions, addons, have, turnsLeft, final } \| undefined` | Current stage = first not yet past its turn, else the last; goldens count |
 | `cardTextParts(raw)` / `cardTextPlain(raw)` | `(string \| undefined): TextPart[]` / `string` | Card text with Hearthstone's bold/italic emphasis kept as parts / stripped |

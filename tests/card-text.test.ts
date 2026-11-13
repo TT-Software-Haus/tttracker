@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { cardTextParts, cardTextPlain } from '../src/renderer/src/lib'
+import { cardTextParts, cardTextPlain, parseCardLinks } from '../src/renderer/src/lib'
 
 /**
  * Hearthstone marks its own keywords up, so the emphasis is real data rather
@@ -46,5 +46,27 @@ describe('reading card text', () => {
     const parts = cardTextParts('Odd</b> text')
     expect(parts.every((p) => !p.bold)).toBe(true)
     expect(cardTextPlain('Odd</b> text')).toBe('Odd text')
+  })
+})
+
+/** HSReplay's How to Play names cards as [[Name||dbfId]]; real text, trimmed. */
+describe('reading card links in a build description', () => {
+  it('splits text from the cards it names', () => {
+    expect(parseCardLinks('Allowing [[Felboar||110664]] or [[Twisted Wrathguard||130662]] to eat.')).toEqual([
+      { text: 'Allowing ' },
+      { text: 'Felboar', dbfId: 110664 },
+      { text: ' or ' },
+      { text: 'Twisted Wrathguard', dbfId: 130662 },
+      { text: ' to eat.' },
+    ])
+  })
+
+  it('handles a link at the very start and end', () => {
+    expect(parseCardLinks('[[Brann Bronzebeard||96786]]')).toEqual([{ text: 'Brann Bronzebeard', dbfId: 96786 }])
+  })
+
+  it('leaves typed text, and brackets that are not links, alone', () => {
+    expect(parseCardLinks('Hold [[two]] Brann.\nThen roll.')).toEqual([{ text: 'Hold [[two]] Brann.\nThen roll.' }])
+    expect(parseCardLinks('')).toEqual([])
   })
 })

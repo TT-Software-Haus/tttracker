@@ -323,7 +323,7 @@ preserved) and that share codes ignore `description`. Playwright on the Builds
 page with a stubbed `window.api`: Find build → the description is filled and
 editable.
 
-### M11 — Description in the build sidebar
+### M11 — Description in the build sidebar ✅ done
 
 A `parseCardLinks` helper in `lib.ts` (text → plain and card-link parts, tested)
 renders the description with bold names. The sidebar card becomes the scroll

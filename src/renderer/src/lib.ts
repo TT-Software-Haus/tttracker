@@ -107,6 +107,25 @@ export function buildsByLobby(builds: Build[], tribes: string[]) {
   return [relevant, builds.filter((b) => !relevant.includes(b))] as const
 }
 
+export interface DescPart {
+  text: string
+  /** Set when this part names a card, from HSReplay's `[[Name||dbfId]]` links. */
+  dbfId?: number
+}
+
+/** A build description split into plain text and the cards it names. */
+export function parseCardLinks(text: string): DescPart[] {
+  const parts: DescPart[] = []
+  let last = 0
+  for (const m of text.matchAll(/\[\[([^\]|]+)\|\|(\d+)\]\]/g)) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) })
+    parts.push({ text: m[1], dbfId: Number(m[2]) })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
 /** Build stages, earliest turn first. The editor doesn't reorder while you type. */
 export function sortedTargets(b: Build) {
   return [...b.targets].sort((x, y) => x.byTurn - y.byTurn)
