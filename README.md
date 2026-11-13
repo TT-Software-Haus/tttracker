@@ -48,4 +48,6 @@ First run: open **Setup**, click **Enable logging**, then restart Hearthstone.
 
 Data is stored as JSON in `%APPDATA%\hearth-tracker\`.
 
+Developer docs: [`docs/`](docs/README.md).
+
 Card data and art come from [HearthstoneJSON](https://hearthstonejson.com). Not affiliated with Blizzard Entertainment.
