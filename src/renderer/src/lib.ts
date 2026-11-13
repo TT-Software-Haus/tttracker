@@ -190,3 +190,60 @@ export function placementStats(matches: BgMatch[]) {
   const firsts = matches.filter((m) => m.placement === 1).length
   return { games: n, avg, topRate: n ? top / n : 0, firsts }
 }
+
+export interface TextPart {
+  text: string
+  bold: boolean
+  italic: boolean
+}
+
+/**
+ * Split card text into emphasis runs.
+ *
+ * Hearthstone already marks its keywords up — "<b>Battlecry:</b>", "<b>Taunt</b>" —
+ * so the information is there; it was being thrown away by stripping the tags.
+ * Returns parts rather than HTML so the caller renders real elements and
+ * nothing ever has to set innerHTML from card data.
+ *
+ * Depth counting rather than matching pairs, because the data nests: Bonus
+ * Keyword reads "<b><b>Bonus Keyword</b>s</b>", and a naive parser un-bolds
+ * the trailing "s".
+ */
+export function cardTextParts(raw: string | undefined): TextPart[] {
+  const text = (raw ?? '')
+    .replace(/\[x\]/g, '')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return []
+  const parts: TextPart[] = []
+  let bold = 0
+  let italic = 0
+  let buf = ''
+  const flush = () => {
+    if (buf) parts.push({ text: buf, bold: bold > 0, italic: italic > 0 })
+    buf = ''
+  }
+  const tag = /<(\/?)([a-zA-Z]+)[^>]*>/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = tag.exec(text))) {
+    buf += text.slice(last, m.index)
+    flush()
+    const delta = m[1] === '/' ? -1 : 1
+    const name = m[2].toLowerCase()
+    if (name === 'b') bold = Math.max(0, bold + delta)
+    if (name === 'i') italic = Math.max(0, italic + delta)
+    last = m.index + m[0].length
+  }
+  buf += text.slice(last)
+  flush()
+  return parts
+}
+
+/** The same text with all markup removed, for searching and plain contexts. */
+export function cardTextPlain(raw: string | undefined): string {
+  return cardTextParts(raw)
+    .map((p) => p.text)
+    .join('')
+}

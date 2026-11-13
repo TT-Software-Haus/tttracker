@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
 import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, Comp, SetupStatus } from '../../shared/types'
 import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips, segments } from './components'
-import { TRIBES, artUrl, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, cardTextParts, cardTextPlain, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
 type Page = 'live' | 'minions' | 'builds' | 'history' | 'stats' | 'settings'
 
@@ -302,7 +302,7 @@ function MinionsPage({ tribes }: { tribes: string[] }) {
     () =>
       pool
         .filter((c) => !active.length || !c.races?.length || c.races.includes('ALL') || c.races.some((r) => active.includes(r)))
-        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()) || (c.text ?? '').toLowerCase().includes(query.toLowerCase())),
+        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()) || cardTextPlain(c.text).toLowerCase().includes(query.toLowerCase())),
     [pool, active.join(), query],
   )
   const tiers = [1, 2, 3, 4, 5, 6, 7]
@@ -358,17 +358,21 @@ function MinionsPage({ tribes }: { tribes: string[] }) {
   )
 }
 
-/** Card text with Hearthstone's markup stripped. */
-function cardText(c: CardInfo) {
-  return (c.text ?? '')
-    .replace(/<\/?[a-z]+>/gi, '')
-    .replace(/\[x\]/g, '')
-    .replace(/\n/g, ' ')
-    .trim()
+/** Card text with Hearthstone's own keyword emphasis kept. */
+function CardText({ text }: { text?: string }) {
+  const parts = cardTextParts(text)
+  if (!parts.length) return null
+  return (
+    <>
+      {parts.map((p, i) => {
+        const body = p.italic ? <i>{p.text}</i> : p.text
+        return p.bold ? <b key={i}>{body}</b> : <span key={i}>{body}</span>
+      })}
+    </>
+  )
 }
 
 function PoolCard({ c }: { c: CardInfo }) {
-  const text = cardText(c)
   return (
     <div className="pool-card">
       <div className="pool-art" style={{ backgroundImage: `url(${artUrl(c.id)})` }}>
@@ -380,7 +384,9 @@ function PoolCard({ c }: { c: CardInfo }) {
       <div className="pool-body">
         <div className="pool-name">{c.name}</div>
         <div className="pool-tribes">{(c.races ?? []).map((r) => (r === 'ALL' ? 'All' : tribeLabel(r))).join(' · ') || 'Neutral'}</div>
-        <div className="pool-text">{text}</div>
+        <div className="pool-text">
+          <CardText text={c.text} />
+        </div>
       </div>
     </div>
   )
@@ -577,7 +583,7 @@ function Picker({ build, pool, query, setQuery, onPick }: { build: Build; pool: 
     () =>
       pool
         .filter((c) => !tribe || !c.races?.length || c.races.includes('ALL') || c.races.includes(tribe))
-        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()) || (c.text ?? '').toLowerCase().includes(query.toLowerCase()))
+        .filter((c) => !query || c.name.toLowerCase().includes(query.toLowerCase()) || cardTextPlain(c.text).toLowerCase().includes(query.toLowerCase()))
         .sort((a, b) => a.name.localeCompare(b.name)),
     [pool, tribe, query],
   )
@@ -609,7 +615,7 @@ function Picker({ build, pool, query, setQuery, onPick }: { build: Build; pool: 
               ★{hovered.techLevel} · {hovered.attack}/{hovered.health}
               {hovered.races?.length ? ` · ${hovered.races.map((r) => (r === 'ALL' ? 'All' : tribeLabel(r))).join(', ')}` : ''}
             </span>
-            <span className="small">{cardText(hovered) || 'No card text.'}</span>
+            <span className="small">{hovered.text ? <CardText text={hovered.text} /> : 'No card text.'}</span>
           </>
         ) : (
           <span className="muted small">Hover a minion to read it.</span>
