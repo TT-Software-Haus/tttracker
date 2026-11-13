@@ -23,9 +23,11 @@ import type { BgSnapshot, Build, SetupStatus } from '../shared/types'
 export function buildsToOffer(
   builds: Build[],
   tribes: string[],
-  state: { heroPicked: boolean; answered: boolean; hasSelection: boolean; inGame: boolean },
+  state: { heroPicked: boolean; answered: boolean; hasSelection: boolean; inGame: boolean; inCombat: boolean },
 ): Build[] | undefined {
-  if (!state.heroPicked || state.answered || state.hasSelection || !state.inGame) return undefined
+  // Still unanswered when a fight starts means the player played on without
+  // it: that's "not this game", and the caller records it so it stays answered.
+  if (!state.heroPicked || state.answered || state.hasSelection || !state.inGame || state.inCombat) return undefined
   // A build with no tribe (a Menagerie board) fits any lobby.
   const matching = builds.filter((b) => !b.tribe || tribes.includes(b.tribe))
   return matching.length ? matching : undefined
@@ -392,12 +394,18 @@ export class Tracker extends EventEmitter {
     }
     const tribes = this.screenTribes.length ? [...new Set([...base.tribes, ...this.screenTribes])].sort() : base.tribes
     const selectedBuild = this.store.builds.find((b) => b.id === this.selectedBuildId)
+    const inCombat = base.phase === 'combat'
     const buildPrompt = buildsToOffer(this.store.builds, tribes, {
       heroPicked: this.heroPicked,
       answered: this.buildPromptAnswered,
       hasSelection: !!selectedBuild,
       inGame: status === 'in-game',
+      inCombat,
     })
+    // Reaching a fight after the hero pick answers the prompt, as if "Not this
+    // game" had been clicked: it doesn't come back next shop, and the lobby
+    // overlay offers "Pick a build" instead.
+    if (inCombat && this.heroPicked) this.buildPromptAnswered = true
     const buildPickable = canPickBuild(this.store.builds, buildPrompt, {
       heroPicked: this.heroPicked,
       hasSelection: !!selectedBuild,

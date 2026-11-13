@@ -11,7 +11,7 @@ describe('deciding whether to offer a build', () => {
   const murlocs: Build = { id: 'b1', name: 'Scam murlocs', tribe: 'MURLOC', targets: [] }
   const demons: Build = { id: 'b2', name: 'Big demons', tribe: 'DEMON', targets: [] }
   const builds = [murlocs, demons]
-  const ready = { heroPicked: true, answered: false, hasSelection: false, inGame: true }
+  const ready = { heroPicked: true, answered: false, hasSelection: false, inGame: true, inCombat: false }
 
   it('offers only the builds whose tribe is in this lobby', () => {
     expect(buildsToOffer(builds, ['MURLOC', 'PIRATE'], ready)).toEqual([murlocs])
@@ -23,6 +23,10 @@ describe('deciding whether to offer a build', () => {
 
   it('never asks twice — dismissing is a real answer', () => {
     expect(buildsToOffer(builds, ['MURLOC'], { ...ready, answered: true })).toBeUndefined()
+  })
+
+  it('withdraws the question once the first fight starts — playing on means no build', () => {
+    expect(buildsToOffer(builds, ['MURLOC'], { ...ready, inCombat: true })).toBeUndefined()
   })
 
   it('stops asking once a build is being followed', () => {

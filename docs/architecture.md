@@ -158,7 +158,8 @@ misplaced ones.
 2. **Offer.** `buildsToOffer()` (exported from `tracker.ts`, tested) returns the builds
    whose `tribe` is in the lobby (or empty), but only after the hero pick, only in game,
    and never once answered or with a build already selected. That becomes
-   `snapshot.buildPrompt`.
+   `snapshot.buildPrompt`. It's withdrawn when combat starts, and the Tracker marks
+   it answered, so a prompt left open into the first fight counts as "Not this game".
 3. **Answer.** `builds:select` → `Tracker.selectBuild(id | null)` marks it answered.
    The selection is in memory and reset on `gameStart`; the Live page's "Going for"
    selector can change it at any time.
