@@ -1,7 +1,8 @@
 import { desktopCapturer } from 'electron'
 import { PSM, createWorker, type Worker } from 'tesseract.js'
 import { parseTribeBanner } from './tribeNames'
-import { findBannerRect } from './bannerRect'
+import { findBannerRect, type Rect } from './bannerRect'
+import { findShopSlots } from './shopSlots'
 
 let worker: Worker | undefined
 
@@ -71,4 +72,26 @@ export async function readLobbyTribes(cacheDir: string): Promise<string[]> {
   const crop = shot.crop(rect)
   if (crop.isEmpty()) return []
   return readTribes(cacheDir, crop.toPNG())
+}
+
+/** The Hearthstone window's position on the desktop, plus where its tavern cards are. */
+export interface ShopGeometry {
+  /** Screen-space rect of each tavern slot, left to right. */
+  slots: Rect[]
+  /** The captured frame's size, for scaling to the real window. */
+  frame: { width: number; height: number }
+}
+
+/**
+ * Locate the tavern's cards on screen.
+ *
+ * Returns frame-space rects; the caller scales them to the window, because the
+ * capture is resized to a fixed height and is rarely 1:1 with the real window.
+ */
+export async function readShopSlots(): Promise<ShopGeometry | undefined> {
+  const shot = await captureGameWindow()
+  if (!shot) return undefined
+  const { width, height } = shot.getSize()
+  const slots = findShopSlots(shot.toBitmap(), width, height)
+  return slots.length ? { slots, frame: { width, height } } : undefined
 }

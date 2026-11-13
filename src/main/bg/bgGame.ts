@@ -445,7 +445,10 @@ export class BgGame {
   private shopMinions(): BoardMinion[] {
     return this.minionEntities(this.dummyPlayerId())
       .filter((e) => e.tags.IS_BACON_POOL_MINION === '1')
-      .map((e) => this.toBoardMinion(e))
+      // The slot a card sits in on screen. Kept because the tavern can also
+      // hold spells, which take a slot without being minions — so counting
+      // minions left-to-right would point at the wrong card.
+      .map((e) => ({ ...this.toBoardMinion(e), pos: Number(e.tags.ZONE_POSITION ?? 0) }))
   }
 
   private simInput(controller: number | undefined): BoardInput {
@@ -577,7 +580,8 @@ export class BgGame {
 
   // ------------------------------------------------------------ output
 
-  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail'> {
+  /** Everything the log can tell us. Screen-derived fields are the Tracker's. */
+  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'> {
     const lobby = this.lobby()
     const me = lobby.find((p) => p.isMe)
     const phase: BgSnapshot['phase'] = this.game.phase === 'over' ? 'over' : !this.game.inGame ? 'none' : this.inCombat ? 'combat' : 'shop'

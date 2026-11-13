@@ -6,18 +6,32 @@ import { TRIBES, artUrl, buildProgress, currentSession, sortedTargets, tribeLabe
 import type { BgSnapshot, Build } from '../../shared/types'
 
 const param = new URLSearchParams(location.search).get('kind')
-const kind = param === 'lobby' ? 'lobby' : param === 'build' ? 'build' : 'odds'
+const kind = param === 'lobby' ? 'lobby' : param === 'build' ? 'build' : param === 'slots' ? 'slots' : 'odds'
 
 function Overlay() {
   const snap = useSnapshot()
   const [settings] = useSettings()
   const locked = settings?.overlay.locked ?? true
   const scale = settings?.overlay.scale ?? 1
+  // The highlight layer is positioned over the game by the main process and
+  // draws in game coordinates, so it gets none of the usual card chrome.
+  if (kind === 'slots') return <Highlights boxes={snap?.shopHighlights ?? []} />
   return (
     <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale }}>
       {!locked && <div className="ov-drag">Drag to position · lock in Setup</div>}
       {snap?.buildPrompt?.length && kind === 'odds' ? <BuildPrompt builds={snap.buildPrompt} /> : null}
       {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : kind === 'lobby' ? <LobbyOverlay snap={snap} /> : <BuildOverlay snap={snap} />)}
+    </div>
+  )
+}
+
+/** Boxes drawn straight onto the game, marking tavern cards the build wants. */
+function Highlights({ boxes }: { boxes: BgSnapshot['shopHighlights'] }) {
+  return (
+    <div className="hl-layer">
+      {boxes.map((b, i) => (
+        <div key={`${b.x}-${b.y}-${i}`} className="hl-box" style={{ left: b.x, top: b.y, width: b.width, height: b.height }} />
+      ))}
     </div>
   )
 }

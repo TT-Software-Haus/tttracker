@@ -3,12 +3,15 @@ import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
 import { fetchCompAddons, fetchComps } from './comps'
+import { getGameWindowRect } from './vision/gameWindow'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
 let store: Store
 let tracker: Tracker
 let mainWin: BrowserWindow | undefined
+/** Draws boxes over Hearthstone itself; sized to the game, never interactive. */
+let highlightWin: BrowserWindow | undefined
 type OverlayKind = 'odds' | 'lobby' | 'build'
 const overlays: Partial<Record<OverlayKind, BrowserWindow>> = {}
 
@@ -79,6 +82,47 @@ function createOverlay(kind: OverlayKind) {
   rememberBounds(win, `overlay-${kind}`)
   loadPage(win, 'overlay', `?kind=${kind}`)
   overlays[kind] = win
+}
+
+function createHighlightWindow() {
+  highlightWin = new BrowserWindow({
+    width: 800,
+    height: 600,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    focusable: false,
+    hasShadow: false,
+    show: false,
+    webPreferences: { preload, contextIsolation: true, sandbox: false },
+  })
+  highlightWin.setAlwaysOnTop(true, 'screen-saver')
+  highlightWin.setVisibleOnAllWorkspaces(true)
+  // Always click-through: this one sits over the board itself, so it must
+  // never take a click meant for the game.
+  highlightWin.setIgnoreMouseEvents(true, { forward: true })
+  loadPage(highlightWin, 'overlay', '?kind=slots')
+}
+
+/**
+ * Keep the highlight window exactly over Hearthstone's client area, so the
+ * renderer can work in game coordinates and ignore where the window is.
+ */
+async function updateHighlightWindow(snap: BgSnapshot) {
+  const win = highlightWin
+  if (!win || win.isDestroyed()) return
+  const wanted = store.settings.overlay.enabled && snap.shopHighlights.length > 0
+  if (!wanted) {
+    if (win.isVisible()) win.hide()
+    return
+  }
+  const rect = await getGameWindowRect()
+  if (!rect) return
+  const b = win.getBounds()
+  if (b.x !== rect.x || b.y !== rect.y || b.width !== rect.width || b.height !== rect.height) win.setBounds(rect)
+  if (!win.isVisible()) win.showInactive()
 }
 
 function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
@@ -173,6 +217,7 @@ app.whenReady().then(async () => {
   tracker.on('snapshot', (snap: BgSnapshot) => {
     broadcast('tracker:snapshot', snap)
     updateOverlays(snap)
+    void updateHighlightWindow(snap)
   })
   tracker.on('data', () => broadcast('data:changed'))
   registerIpc()
@@ -180,6 +225,7 @@ app.whenReady().then(async () => {
   createOverlay('odds')
   createOverlay('lobby')
   createOverlay('build')
+  createHighlightWindow()
   await tracker.start()
   broadcast('data:changed')
   updateOverlays()

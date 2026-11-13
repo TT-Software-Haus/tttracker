@@ -7,7 +7,8 @@ import { Game } from './game/game'
 import { BgGame } from './bg/bgGame'
 import { checkLogConfig, ensureLogConfig, findActiveLogDir, findInstallPath, installLooksValid, logConfigPath } from './logs/hsPaths'
 import { LogTail, lastGameOffset } from './logs/logTail'
-import { readLobbyTribes, stopVision } from './vision/heroSelect'
+import { readLobbyTribes, readShopSlots, stopVision } from './vision/heroSelect'
+import { getGameWindowRect } from './vision/gameWindow'
 import type { Store } from './store'
 import type { BgSnapshot, Build, SetupStatus } from '../shared/types'
 
@@ -79,6 +80,11 @@ export class Tracker extends EventEmitter {
   /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
   private buildPromptAnswered = false
   private tribeTimer?: NodeJS.Timeout
+  /** Boxes to draw over the tavern, in Hearthstone client coordinates. */
+  private highlights: BgSnapshot['shopHighlights'] = []
+  /** What the tavern held when those boxes were worked out. */
+  private highlightKey = ''
+  private highlightBusy = false
 
   constructor(
     private store: Store,
@@ -106,6 +112,8 @@ export class Tracker extends EventEmitter {
         this.overSince = undefined
         this.endedDuringReplay = false
         this.stopTribeRead()
+        this.highlights = []
+        this.highlightKey = ''
         this.screenTribes = []
         this.heroPicked = false
         this.selectedBuildId = undefined
@@ -279,6 +287,59 @@ export class Tracker extends EventEmitter {
     this.tribeTimer = undefined
   }
 
+
+  /**
+   * Work out where to draw boxes over the tavern, when there's anything worth
+   * pointing at.
+   *
+   * Recomputed only when the tavern's contents change, not on every snapshot —
+   * publishing runs ~17 times a second and this captures and scans the screen.
+   * Everything about it is best-effort: no build, nothing wanted, a failed
+   * capture or a slot count that doesn't cover the card we care about all end
+   * with no boxes rather than boxes in the wrong place.
+   */
+  private refreshHighlights(base: Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'>, build: Build | undefined) {
+    const wanted = new Set<string>()
+    if (build) {
+      for (const t of build.targets) for (const id of t.cardIds) wanted.add(id.replace(/_G$/, ''))
+      for (const id of build.addons ?? []) wanted.add(id.replace(/_G$/, ''))
+    }
+    const owned = new Set(base.board.map((m) => m.cardId.replace(/_G$/, '')))
+    const targets = base.phase === 'shop' ? base.shop.filter((m) => wanted.has(m.cardId.replace(/_G$/, '')) && !owned.has(m.cardId.replace(/_G$/, ''))) : []
+
+    const key = targets.map((m) => `${m.pos}:${m.cardId}`).join(',')
+    if (key === this.highlightKey) return
+    this.highlightKey = key
+    if (!targets.length) {
+      this.highlights = []
+      return
+    }
+    if (this.highlightBusy) return
+    this.highlightBusy = true
+    void (async () => {
+      try {
+        const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
+        if (!geo || !win) return
+        // The capture is resized, so frame coordinates need scaling to the
+        // window's client area before they mean anything on screen.
+        const sx = win.width / geo.frame.width
+        const sy = win.height / geo.frame.height
+        const boxes = targets
+          .map((m) => geo.slots[(m.pos ?? 0) - 1])
+          .filter(Boolean)
+          .map((r) => ({ x: Math.round(r.x * sx), y: Math.round(r.y * sy), width: Math.round(r.width * sx), height: Math.round(r.height * sy) }))
+        // Only publish if the tavern hasn't moved on while we were looking.
+        if (this.highlightKey !== key) return
+        this.highlights = boxes
+        this.publish()
+      } catch (err) {
+        console.warn('could not locate the tavern on screen', err)
+      } finally {
+        this.highlightBusy = false
+      }
+    })()
+  }
+
   // ------------------------------------------------------------- snapshots
 
   private schedulePublish() {
@@ -324,7 +385,8 @@ export class Tracker extends EventEmitter {
       hasSelection: !!selectedBuild,
       inGame: status === 'in-game',
     })
-    const snap: BgSnapshot = { ...base, status, statusDetail, tribes, selectedBuild, buildPrompt }
+    this.refreshHighlights(base, selectedBuild)
+    const snap: BgSnapshot = { ...base, status, statusDetail, tribes, selectedBuild, buildPrompt, shopHighlights: this.highlights }
     this.lastSnapshot = snap
     this.emit('snapshot', snap)
   }

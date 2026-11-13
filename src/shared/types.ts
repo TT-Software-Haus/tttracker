@@ -42,6 +42,8 @@ export interface BoardMinion {
   venomous?: boolean
   windfury?: boolean
   stealth?: boolean
+  /** Shop minions only: which tavern slot this is in, 1-based. */
+  pos?: number
 }
 
 export interface SimOdds {
@@ -123,6 +125,12 @@ export interface BgSnapshot {
   selectedBuild?: Build
   /** Builds worth offering: set once after the hero is picked, cleared once answered. */
   buildPrompt?: Build[]
+  /**
+   * Where to draw highlight boxes over the real game, relative to Hearthstone's
+   * client area. Empty unless a build is selected and one of its minions is on
+   * offer right now.
+   */
+  shopHighlights: { x: number; y: number; width: number; height: number }[]
 }
 
 export interface BgMatch {
