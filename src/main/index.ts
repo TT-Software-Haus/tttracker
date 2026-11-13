@@ -22,8 +22,11 @@ function loadPage(win: BrowserWindow, page: 'index' | 'overlay', query = '') {
   else win.loadFile(join(__dirname, `../renderer/${page}.html`), { search: query.replace(/^\?/, '') })
 }
 
+/** Windows we're resizing ourselves, so their temporary size isn't persisted. */
+const resizingOurselves = new Set<string>()
+
 function rememberBounds(win: BrowserWindow, name: string) {
-  const save = () => !win.isDestroyed() && store.setBounds(name, win.getBounds())
+  const save = () => !win.isDestroyed() && !resizingOurselves.has(name) && store.setBounds(name, win.getBounds())
   win.on('moved', save)
   win.on('resized', save)
 }
@@ -125,6 +128,38 @@ async function updateHighlightWindow(snap: BgSnapshot) {
   if (!win.isVisible()) win.showInactive()
 }
 
+
+/**
+ * Make room for the build prompt in the odds window.
+ *
+ * Both cards live in that one window, which defaults to 170px tall — enough
+ * for the odds alone. With a prompt above them the odds card is pushed almost
+ * entirely out of view, and a lobby matching several builds pushes the prompt's
+ * own lower options out too, where they can't be clicked.
+ *
+ * So the window grows while a prompt is up and goes back to the size the user
+ * chose once it's answered. The saved bounds are left alone throughout —
+ * this is our resize, not theirs.
+ */
+function growOddsForPrompt(count: number) {
+  const win = overlays.odds
+  if (!win || win.isDestroyed()) return
+  const saved = store.getBounds('overlay-odds')
+  const base = saved?.height ?? 170
+  if (!count) {
+    if (!resizingOurselves.has('overlay-odds')) return
+    resizingOurselves.delete('overlay-odds')
+    const b = win.getBounds()
+    win.setBounds({ ...b, height: base })
+    return
+  }
+  // Header, one row per build, and the card's own padding.
+  const wanted = Math.min(base + 56 + count * 46, screen.getPrimaryDisplay().workArea.height - 40)
+  if (win.getBounds().height >= wanted) return
+  resizingOurselves.add('overlay-odds')
+  win.setBounds({ ...win.getBounds(), height: wanted })
+}
+
 function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   const o = store.settings.overlay
   const inGame = snap.status === 'in-game' || snap.status === 'game-over'
@@ -132,6 +167,7 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   // window stops being click-through for as long as it's up — and goes back to
   // whatever lock setting was in force the moment it's answered.
   const prompting = !!snap.buildPrompt?.length
+  growOddsForPrompt(snap.buildPrompt?.length ?? 0)
   for (const kind of ['odds', 'lobby', 'build'] as const) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
