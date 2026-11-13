@@ -134,20 +134,12 @@ a {
 .status-live {
   color: var(--text);
 }
+/* Static on purpose: an endless animation repaints its window every frame,
+   and over a running game that was measured at ~80% of a core in the GPU
+   process. The resting look is the old animation's peak. */
 .status-live .status-dot {
   background: var(--loss);
-  animation: pulse 1.6s infinite;
-}
-@keyframes pulse {
-  0% {
-    box-shadow: 0 0 0 0 rgba(240, 96, 90, 0.7);
-  }
-  70% {
-    box-shadow: 0 0 0 7px rgba(240, 96, 90, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(240, 96, 90, 0);
-  }
+  box-shadow: 0 0 0 3px rgba(240, 96, 90, 0.3);
 }
 
 .sidebar {
@@ -1326,7 +1318,8 @@ a {
     transform: none;
   }
 }
-/* A live fight: a light sweeps across the card's top edge. */
+/* A live fight: a lit top edge. It used to be a light sweeping across, which
+   even as a transform kept the overlay redrawing every frame over the game. */
 .ov-live {
   position: relative;
   overflow: hidden;
@@ -1336,22 +1329,9 @@ a {
   position: absolute;
   top: 0;
   left: 0;
-  width: 40%;
+  width: 100%;
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
-  animation: sweep 1.8s linear infinite;
-}
-/* Travels from just off the left edge to just past the right: 140% of the card,
-   which is 350% of this element's own 40% width. Translating rather than
-   animating `left` matters here more than anywhere else in the file — this one
-   loops forever, over a running game. */
-@keyframes sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(250%);
-  }
 }
 
 /* Result badge: pops in; wins glow, losses shake. */
@@ -1395,25 +1375,20 @@ a {
   }
 }
 
-/* Lethal warning pulses. */
+/* Lethal warning: glows. */
+/* Static on purpose: an endless animation repaints its window every frame,
+   and over a running game that was measured at ~80% of a core in the GPU
+   process. The resting look is the old animation's peak. */
 .pulse {
-  animation: pulse-text 1.1s ease-in-out infinite;
-}
-@keyframes pulse-text {
-  50% {
-    opacity: 0.45;
-    text-shadow: 0 0 10px rgba(240, 96, 90, 0.9);
-  }
+  text-shadow: 0 0 10px rgba(240, 96, 90, 0.9);
 }
 
-/* Next opponent: soft breathing glow. */
+/* Next opponent: a soft glow. */
+/* Static on purpose: an endless animation repaints its window every frame,
+   and over a running game that was measured at ~80% of a core in the GPU
+   process. The resting look is the old animation's peak. */
 .lobby-next {
-  animation: next-glow 2.4s ease-in-out infinite;
-}
-@keyframes next-glow {
-  50% {
-    box-shadow: 0 0 0 1px rgba(240, 96, 90, 0.55), 0 0 14px rgba(240, 96, 90, 0.35);
-  }
+  box-shadow: 0 0 0 1px rgba(240, 96, 90, 0.55), 0 0 14px rgba(240, 96, 90, 0.35);
 }
 
 /* Damage taken floats up from a hero's health. */
@@ -1841,19 +1816,12 @@ a {
   border: 3px solid var(--accent);
   border-radius: 12px;
   box-shadow: 0 0 14px rgba(240, 178, 50, 0.85), inset 0 0 14px rgba(240, 178, 50, 0.45);
-  animation: hl-pulse 1.4s ease-in-out infinite;
 }
-/* Debug boxes: every tavern minion, to check placement. Steady, so they
-   don't compete with the build's gold boxes. */
+/* Debug boxes: every tavern minion, to check placement. Thinner glow, so the
+   build's gold boxes still stand out. */
 .hl-box.hl-debug {
   border-color: #b06cff;
   box-shadow: 0 0 10px rgba(176, 108, 255, 0.7);
-  animation: none;
-}
-@keyframes hl-pulse {
-  50% {
-    opacity: 0.55;
-  }
 }
 .build-bar {
   display: flex;
