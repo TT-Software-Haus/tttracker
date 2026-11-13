@@ -63,14 +63,27 @@ accumulating tribe list rather than prompting on a wrong read.
 **Verify:** capture a real hero-select frame, assert the matcher returns the
 tribes actually on screen.
 
-**Status: NOT closed.** Verified: the parser (5 tests — OCR typos, loose crops,
-and that unrelated UI words don't invent a tribe), tesseract end-to-end in Node
-against a rendered banner (clean read → correct race codes), and
-`require("tesseract.js")` being externalised rather than inlined by
-electron-vite. **Outstanding:** `DEFAULT_BANNER_RECT` is eyeballed off a stream
-screenshot and has never met a real Hearthstone frame. Needs one live
-hero-select to confirm or calibrate. Failure is inert — an empty read falls
-back to the log's tribe list — so it sits on the branch safely until then.
+**Status: verified against a real frame.** A live 2560x1440 hero-select capture
+(ground truth: Beasts, Dragons, Elementals, Mechs, Murlocs) is read correctly
+by the production code path — `findBannerRect` locates the plate at
+`{1256, 298, 1230, 135}` and the OCR returns all five.
+
+Three things that frame overturned:
+
+1. **The fixed rect was wrong and the idea was wrong.** The banner sat 640px
+   right of where centring predicts. Replaced by colour detection.
+2. **The trigger was at the wrong end.** `MULLIGAN_STATE=DONE` is when hero
+   select *closes* — measured: heroes offered 11:19:59, DONE 11:21:08, shop
+   0.4s later. Now starts when heroes are offered and retries across the ~70s
+   window.
+3. **Tesseract's layout guesser is not deterministic enough to rely on.** A
+   one-pixel change in the crop lost a tribe. Fixed with `PSM.SPARSE_TEXT` and
+   a character whitelist; every crop from the detected box out to a 1920x245
+   band now reads all five.
+
+**Outstanding:** only a second frame at a different resolution, to confirm the
+colour thresholds generalise. Failure stays inert — an empty read falls back to
+the log's tribe list.
 
 ### M3 — Selecting a build, and the post-hero-pick prompt
 

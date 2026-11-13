@@ -34,6 +34,9 @@ export function buildsToOffer(
  * snapshots. Emits 'snapshot' (BgSnapshot) and 'data' (match history changed).
  */
 const GAME_OVER_LINGER_MS = 30_000
+/** Hero select lasts ~70s; retry the banner read across it, then give up. */
+const TRIBE_READ_ATTEMPTS = 12
+const TRIBE_READ_INTERVAL_MS = 2500
 const STALL_MS = 3 * 60_000
 
 function isHearthstoneRunning(): Promise<boolean> {
@@ -74,6 +77,7 @@ export class Tracker extends EventEmitter {
   private selectedBuildId?: string
   /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
   private buildPromptAnswered = false
+  private tribeTimer?: NodeJS.Timeout
 
   constructor(
     private store: Store,
@@ -100,19 +104,23 @@ export class Tracker extends EventEmitter {
       if (e.type === 'gameStart') {
         this.overSince = undefined
         this.endedDuringReplay = false
+        this.stopTribeRead()
         this.screenTribes = []
         this.heroPicked = false
         this.selectedBuildId = undefined
         this.buildPromptAnswered = false
       }
+      // The minion-type banner is only on screen while you're choosing, so the
+      // read starts when the heroes are offered — not at MULLIGAN_STATE=DONE,
+      // which is the moment the screen is dismissed (measured on a real game:
+      // heroes offered 11:19:59, DONE 11:21:08, first shop 0.4s after that).
+      if (e.type === 'created' && e.entity.tags.BACON_HERO_CAN_BE_DRAFTED === '1' && !this.catchingUp) this.startTribeRead()
       // In Battlegrounds the mulligan *is* the hero choice, so DONE means the
-      // hero is locked and the minion-type banner is still on screen. This is
-      // the only moment the full tribe list is knowable — the log doesn't carry
-      // it, and the first shop only reveals part of it.
+      // hero is locked — which is when a build becomes worth offering.
       if (e.type === 'tag' && e.tag === 'MULLIGAN_STATE' && e.value === 'DONE' && !this.heroPicked && !this.catchingUp) {
         if (e.entity === this.game.playerEntity(this.game.friendlyPlayerId)) {
           this.heroPicked = true
-          this.readTribesFromScreen()
+          this.schedulePublish()
         }
       }
       if (e.type === 'gameEnd') {
@@ -150,6 +158,7 @@ export class Tracker extends EventEmitter {
   stop() {
     if (this.dirTimer) clearInterval(this.dirTimer)
     this.powerTail?.stop()
+    this.stopTribeRead()
     void stopVision()
   }
 
@@ -228,17 +237,39 @@ export class Tracker extends EventEmitter {
   }
 
   /**
-   * Fire-and-forget: a slow or failed screen read must never hold up log
-   * parsing, and an empty result just means we fall back to the log's view.
+   * Poll the hero-select screen until the banner reads. One shot isn't enough:
+   * the plate slides in, so an early capture finds a half-drawn banner. Hero
+   * select lasts a minute or so, which is plenty of room to retry.
+   *
+   * Fire-and-forget throughout — a slow or failed read must never hold up log
+   * parsing, and giving up just means falling back to the log's own tribe list.
    */
-  private readTribesFromScreen() {
-    void readLobbyTribes(this.cacheDir)
-      .then((tribes) => {
-        if (!tribes.length) return
+  private startTribeRead() {
+    if (this.tribeTimer || this.screenTribes.length) return
+    let attempts = 0
+    const tick = async () => {
+      this.tribeTimer = undefined
+      attempts++
+      const tribes = await readLobbyTribes(this.cacheDir).catch((err) => {
+        console.warn('could not read tribes from the hero-select screen', err)
+        return [] as string[]
+      })
+      if (tribes.length) {
         this.screenTribes = tribes
         this.publish()
-      })
-      .catch((err) => console.warn('could not read tribes from the hero-select screen', err))
+        return
+      }
+      // Stop once the hero is locked in: the banner has gone, and anything we
+      // read after that is some other screen.
+      if (attempts >= TRIBE_READ_ATTEMPTS || this.heroPicked) return
+      this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
+    }
+    this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
+  }
+
+  private stopTribeRead() {
+    if (this.tribeTimer) clearTimeout(this.tribeTimer)
+    this.tribeTimer = undefined
   }
 
   // ------------------------------------------------------------- snapshots
