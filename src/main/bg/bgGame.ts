@@ -430,6 +430,24 @@ export class BgGame {
     return this.minionEntities(controller).map((e) => this.toBoardMinion(e))
   }
 
+  /**
+   * What's on offer in the tavern right now.
+   *
+   * During a shop phase the offerings sit in the *other* player's PLAY zone —
+   * the same slot that holds the opponent's warband during a fight. Verified
+   * against a real log: four pool minions early in the shop, two by the end
+   * (the missing pair having been bought and appeared on my own board), and
+   * none at all once combat starts.
+   *
+   * Only ever call this during 'shop'. The IS_BACON_POOL_MINION filter keeps
+   * out anything in that slot that isn't a tavern minion.
+   */
+  private shopMinions(): BoardMinion[] {
+    return this.minionEntities(this.dummyPlayerId())
+      .filter((e) => e.tags.IS_BACON_POOL_MINION === '1')
+      .map((e) => this.toBoardMinion(e))
+  }
+
   private simInput(controller: number | undefined): BoardInput {
     const hero = this.fightingHero(controller)
     const pid = hero ? Number(hero.tags.PLAYER_ID ?? 0) : 0
@@ -571,6 +589,7 @@ export class BgGame {
       lobby,
       tribes: [...this.tribes].sort(),
       board: this.boardOf(this.game.friendlyPlayerId),
+      shop: phase === 'shop' ? this.shopMinions() : [],
       combat: this.current ?? this.rounds[this.rounds.length - 1],
       rounds: this.rounds,
       placement: this.placement,

@@ -139,7 +139,7 @@ with its source recorded.
 **Expect this to break** when HSReplay restructures the page. It fails with a
 readable message and offers the link instead.
 
-### M4 — Build sidebar overlay
+### M4 — Build sidebar overlay ✅ done (`5592a0f`)
 
 Third overlay window (`kind=build`), same machinery as odds/lobby: own entry in
 `updateOverlays()`, own saved rect in `windows.json`, own `showBuild` setting
@@ -149,6 +149,13 @@ target whose `byTurn >= round`), each minion ticked off if it's already on
 
 **Verify:** run the app with a build selected; overlay shows the right target
 for the turn and ticks minions as they land on the board.
+
+**Verified:** `buildProgress` has 8 tests covering the turns where the stage
+choice is ambiguous (on the deadline turn, just past it, all deadlines passed,
+stages stored out of order, golden copies). The overlay was driven in
+Playwright across five states — early, due this turn, overdue, complete, and no
+build selected (renders nothing) — all correct, no overflow at the default
+240x420.
 
 ### M5 — Shop detection
 

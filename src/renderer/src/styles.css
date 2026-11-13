@@ -1732,3 +1732,18 @@ a {
   color: var(--win);
   font-size: 12px;
 }
+/* On offer right now and not yet owned — the one thing here that wants acting on. */
+.ov-build-minion.in-shop {
+  opacity: 1;
+  background: rgba(240, 178, 50, 0.16);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.ov-build-shop {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}

@@ -48,10 +48,27 @@ describe('tracking progress against a build', () => {
     const p = buildProgress(build, 7, [minion('BG_C'), minion('BG_X')])
     expect(p?.have).toBe(1)
     expect(p?.minions).toEqual([
-      { cardId: 'BG_C', have: true },
-      { cardId: 'BG_D', have: false },
-      { cardId: 'BG_E', have: false },
+      { cardId: 'BG_C', have: true, inShop: false },
+      { cardId: 'BG_D', have: false, inShop: false },
+      { cardId: 'BG_E', have: false, inShop: false },
     ])
+  })
+
+  it('flags a wanted minion that is in the tavern right now', () => {
+    const p = buildProgress(build, 7, [], [minion('BG_D'), minion('BG_Z')])
+    expect(p?.minions.find((m) => m.cardId === 'BG_D')?.inShop).toBe(true)
+    expect(p?.minions.find((m) => m.cardId === 'BG_E')?.inShop).toBe(false)
+  })
+
+  it('does not nag about a minion in the shop that you already own', () => {
+    // Shops offer duplicates constantly; "buy this" is noise once you have it.
+    const p = buildProgress(build, 7, [minion('BG_C')], [minion('BG_C')])
+    expect(p?.minions.find((m) => m.cardId === 'BG_C')).toEqual({ cardId: 'BG_C', have: true, inShop: false })
+  })
+
+  it('matches a golden copy sitting in the tavern', () => {
+    const p = buildProgress(build, 7, [], [minion('BG_D_G')])
+    expect(p?.minions.find((m) => m.cardId === 'BG_D')?.inShop).toBe(true)
   })
 
   it('counts a golden copy as having the minion', () => {

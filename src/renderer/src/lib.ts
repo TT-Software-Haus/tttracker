@@ -115,12 +115,18 @@ export function sortedTargets(b: Build) {
  * advice. Golden copies count — a golden Tidecaller is still a Tidecaller, and
  * telling someone they're missing a minion they tripled would be absurd.
  */
-export function buildProgress(build: Build, round: number, board: BoardMinion[]) {
+export function buildProgress(build: Build, round: number, board: BoardMinion[], shop: BoardMinion[] = []) {
   const stages = sortedTargets(build)
   const stage = stages.find((t) => t.byTurn >= round) ?? stages.at(-1)
   if (!stage) return undefined
   const owned = new Set(board.map((m) => baseCardId(m.cardId)))
-  const minions = stage.cardIds.map((cardId) => ({ cardId, have: owned.has(baseCardId(cardId)) }))
+  const offered = new Set(shop.map((m) => baseCardId(m.cardId)))
+  const minions = stage.cardIds.map((cardId) => ({
+    cardId,
+    have: owned.has(baseCardId(cardId)),
+    // Worth shouting about: it's in the tavern now and you haven't got it.
+    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
+  }))
   return {
     stage,
     minions,

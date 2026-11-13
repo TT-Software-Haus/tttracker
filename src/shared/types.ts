@@ -114,6 +114,8 @@ export interface BgSnapshot {
   tribes: string[]
   /** Your current board (during shop: your warband; during combat: the fighting copy). */
   board: BoardMinion[]
+  /** What's on offer in the tavern. Only populated during a shop phase. */
+  shop: BoardMinion[]
   combat?: CombatRound
   rounds: CombatRound[]
   placement?: number

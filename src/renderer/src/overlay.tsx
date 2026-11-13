@@ -74,7 +74,7 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const pool = usePool()
   const names = useMemo(() => new Map(pool.map((c) => [c.id, c.name])), [pool])
   if (!build) return null
-  const p = buildProgress(build, Math.max(1, snap.round), snap.board)
+  const p = buildProgress(build, Math.max(1, snap.round), snap.board, snap.shop)
   if (!p) return null
   const done = p.have === p.minions.length
   return (
@@ -90,10 +90,10 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
       </div>
       <div className="ov-build-list">
         {p.minions.map((m, i) => (
-          <div key={`${m.cardId}-${i}`} className={`ov-build-minion ${m.have ? 'have' : ''}`}>
+          <div key={`${m.cardId}-${i}`} className={`ov-build-minion ${m.have ? 'have' : ''} ${m.inShop ? 'in-shop' : ''}`}>
             <span className="ov-build-art" style={{ backgroundImage: `url(${artUrl(m.cardId)})` }} />
             <span className="ov-build-name">{names.get(m.cardId) ?? m.cardId}</span>
-            {m.have && <span className="ov-build-tick">✓</span>}
+            {m.have ? <span className="ov-build-tick">✓</span> : m.inShop ? <span className="ov-build-shop">in shop</span> : null}
           </div>
         ))}
       </div>
