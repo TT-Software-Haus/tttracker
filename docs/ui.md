@@ -157,8 +157,13 @@ win.setOpacity(opacity)
   "Drag to position · lock in Setup" strip. Unlocked overlays also stay visible out of
   game, so they can be positioned without starting a match.
 
-`scale` is applied as CSS `zoom` on the overlay root. It scales content but not the
-window, so a large scale can overflow a saved window size.
+Main sizes each overlay window to the game (see
+[architecture.md](architecture.md#processes)) and sends the matching zoom over
+`overlay:zoom` (`window.api.onOverlayZoom`); the renderer applies it as CSS `zoom` on
+the overlay root. Not `webContents.setZoomFactor`, because Chromium shares a zoom level
+across every window of the same origin, the main window included. CSS zoom doesn't
+adjust viewport units, so the overlay styles use `--vh` (1vh corrected for the zoom,
+set on the root) where they'd otherwise use `vh`.
 
 ## Animation — `anim.ts`
 

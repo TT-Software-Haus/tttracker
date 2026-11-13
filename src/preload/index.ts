@@ -14,6 +14,8 @@ const api = {
   onSnapshot: (fn: (s: BgSnapshot) => void) => subscribe('tracker:snapshot', fn),
   onDataChanged: (fn: () => void) => subscribe('data:changed', fn),
   onSettingsChanged: (fn: (s: Settings) => void) => subscribe('settings:changed', fn),
+  /** Overlays only: how much to zoom, from the game window's size and the Size setting. */
+  onOverlayZoom: (fn: (zoom: number) => void) => subscribe('overlay:zoom', fn),
 
   setupStatus: (): Promise<SetupStatus> => ipcRenderer.invoke('setup:status'),
   fixLogConfig: (): Promise<void> => ipcRenderer.invoke('setup:fixLogConfig'),

@@ -1494,10 +1494,13 @@ a {
 .overlay-body {
   background: transparent;
 }
+/* Overlays are drawn under a CSS zoom (sized to the game window), and zoom
+   doesn't adjust viewport units: at 0.6, "the full height" came out at 60% and
+   cut the lobby list short. --vh is 1vh corrected for the zoom; set on .overlay. */
 .overlay {
   padding: 6px;
   user-select: none;
-  height: 100vh;
+  height: calc(100 * var(--vh, 1vh));
   overflow: hidden;
 }
 .overlay.unlocked {
@@ -1539,7 +1542,7 @@ a {
   margin: 0;
 }
 .ov-lobby {
-  max-height: calc(100vh - 20px);
+  max-height: calc(100 * var(--vh, 1vh) - 20px);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1578,7 +1581,7 @@ a {
   gap: 4px;
   /* Overlay windows are a fixed size, so a long build list has to scroll —
      otherwise options past the window edge are silently unclickable. */
-  max-height: 40vh;
+  max-height: calc(40 * var(--vh, 1vh));
   overflow-y: auto;
 }
 .ov-prompt-build {
@@ -1670,7 +1673,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: calc(100vh - 20px);
+  max-height: calc(100 * var(--vh, 1vh) - 20px);
   /* The whole card scrolls rather than just the list, so a long How to Play
      can't squeeze the minions out of view. */
   overflow-y: auto;

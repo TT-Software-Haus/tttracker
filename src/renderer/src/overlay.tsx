@@ -13,12 +13,14 @@ function Overlay() {
   const snap = useSnapshot()
   const [settings] = useSettings()
   const locked = settings?.overlay.locked ?? true
-  const scale = settings?.overlay.scale ?? 1
+  // Main sizes the window to the game and sends the zoom to match.
+  const [scale, setScale] = useState(1)
+  useEffect(() => window.api.onOverlayZoom(setScale), [])
   // The highlight layer is positioned over the game by the main process and
   // draws in game coordinates, so it gets none of the usual card chrome.
   if (kind === 'slots') return <Highlights boxes={snap?.shopHighlights ?? []} />
   return (
-    <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale }}>
+    <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale, ['--vh' as string]: `${1 / scale}vh` }}>
       {!locked && <div className="ov-drag">Drag to position · lock in Setup</div>}
       {snap?.buildPrompt?.length && kind === 'odds' ? <BuildPrompt builds={snap.buildPrompt} /> : null}
       {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : kind === 'lobby' ? <LobbyOverlay snap={snap} /> : <BuildOverlay snap={snap} />)}

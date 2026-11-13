@@ -33,6 +33,7 @@ Every `on*` returns an unsubscribe function, which the hooks return straight out
 | `updateSettings(patch)` | `settings:update` | invoke | `Partial<Settings>` → merged `Settings` |
 | `openExternal(url)` | `app:openExternal` | invoke | `string` → `void` |
 | `setInteractive(on)` | `overlay:interactive` | invoke | `boolean` → `void` (overlays only) |
+| `onOverlayZoom(fn)` | `overlay:zoom` | push | `number`: the overlay's zoom (game size × Size setting) |
 
 Notes:
 
@@ -146,7 +147,8 @@ Everything lives in Electron's `userData` directory
 | `settings.json` | `Settings` |
 | `builds.json` | `Build[]` |
 | `build-choice.json` | `{ game, buildId?, answered }`: the build answer for the latest game, so a restart mid-game keeps it |
-| `windows.json` | `Record<name, Electron.Rectangle>` — `main`, `overlay-odds`, `overlay-lobby`, `overlay-build` |
+| `windows.json` | `Record<name, Electron.Rectangle>` — the main window's bounds |
+| `overlay-places.json` | `Record<kind, { fx, fy, width, height }>`: each overlay's position relative to the game window, size at scale 1 |
 | `carddata/cards-v2.json` | HearthstoneJSON cache (owned by `CardDb`, not `Store`) |
 | `carddata/eng.traineddata` | tesseract.js language data (~5 MB), downloaded on first OCR |
 

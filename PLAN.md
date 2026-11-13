@@ -374,7 +374,7 @@ be a secure context (`file://` or `localhost`), as the app's already are.
 
 ## Milestones
 
-### M12 — Stream capture, used for the tavern
+### M12 — Stream capture, used for the tavern ✅ done (`e2b730b`)
 
 A hidden capture window (`overlay.html?kind=capture`, `backgroundThrottling:
 false`) and a `vision/stream.ts` in main: `captureFrame(height)` opens the
@@ -389,7 +389,7 @@ told, and repeated reads hold memory flat (vs the 1.37GB loop). Then live shop
 phases in Hearthstone's **Fullscreen** and **windowed** modes: boxes as before,
 no black frames, and the main process's CPU during shops.
 
-### M13 — Tribe OCR on the stream; drop thumbnail capture
+### M13 — Tribe OCR on the stream; drop thumbnail capture — built, awaiting live check
 
 `readLobbyTribes` reads a 1440-high frame from the stream and crops the banner
 from it (`nativeImage.createFromBitmap` → `crop` → `toPNG`); the tribe read
@@ -408,3 +408,103 @@ live hero select: the tribes read as before.
   Hearthstone's Fullscreen *and* windowed modes, and the capture logs a warning
   when a frame comes back black, so a silent capture failure is visible.
 - A 0.8s open per shop delays the first box of each shop slightly.
+
+## Status (2026-11-13)
+
+M12 and M13 are built; both wait on a live game before they're committed.
+Checked so far against a stand-in window titled "Hearthstone": frames at the
+window's aspect, 720 high (1276x720), colour order right after the BGRA swap,
+6-11ms per read, memory flat over 20 reads, nothing returned with no window, and
+first frame 0.95s after opening at 5fps (2.6s at 2fps). An open stream cost under
+1% of a core at 2, 5 and 15fps. The real readLobbyTribes read all five tribes off
+a stand-in banner through the stream in 1.7s.
+
+Found during the first live game on the stream: a box occasionally landed on
+the tavern spell. A missed end shield shifts every slot one over, and after a
+purchase the log updates while the cards are still sliding. Boxes now need the
+screen's slot count to equal the log's tavern size, spells included (checked
+against the live log at the end of each shop: 4, 4, 5, matching the screen).
+
+Windowed mode, live: the boxes were sized and placed as if the frame were the
+client area, but a window capture includes the title bar. gameWindow.ts now also
+returns DWM's extended frame bounds (what the capture covers; 1924x1127 around a
+1920x1080 client area, offset (2, 45) at 150%), and boxes are mapped through it.
+Checked by drawing the computed boxes on a screenshot taken at the same instant:
+square on the cards. Fullscreen is unchanged (the offset is zero there).
+
+Still to see live: boxes in Hearthstone's Fullscreen and windowed modes, no
+black frames, tribes read at a real hero select, and the main process's CPU
+during shops.
+
+---
+
+# Follow-up — overlays that move and scale with the game window
+
+Asked for 2026-11-13, in windowed mode: the odds, lobby and build overlays sit at
+the *screen's* edges (or wherever they were dragged) and keep their size, so with
+a 1920x1080 game window they float outside it. They should always sit at the
+inside edges of the game window, and scale and move with it.
+
+## Decisions taken
+
+- **Anchored to the game's client area**, the same rect the highlight layer
+  uses. With no game window (not running), the primary display's work area
+  stands in, so positioning out of game still works.
+- **Draggable, remembered relative to the game.** Each overlay's position is
+  stored as a fraction of the free space inside the anchor:
+  `fx = (x - anchor.x) / (anchor.width - width)`, likewise `fy`, clamped to
+  0..1. 0 is flush left/top, 1 flush right/bottom, 0.5 centred, whatever the
+  window's size or scale, and an overlay can never leave the game area.
+  Defaults: odds top-centre, lobby left edge, build sidebar right edge.
+  Positions saved before this change are ignored.
+- **Scale with the game window's height**: `max(0.6, anchor.height / 1440)`
+  times the existing Size slider. 1440 is this monitor's fullscreen height in
+  DIPs, so fullscreen looks exactly as it does today; a 1920x1080 window at
+  150% (720 DIP high) comes out at the 0.6 floor. Window sizes are stored
+  unscaled (a resize while unlocked divides by the scale) and multiplied out;
+  page content scales through `webContents.setZoomFactor`, replacing the
+  renderer's CSS `zoom`. The highlight layer is untouched (it draws in game
+  coordinates already).
+
+## Milestones
+
+### M14 — Overlays placed at the game window's inside edges, following it ✅ done
+
+A pure `src/main/overlayLayout.ts`: `place(placement, anchor, scale)` → bounds,
+and `placementOf(bounds, anchor, scale)` for drags. `index.ts` keeps one
+placement per overlay (new `overlay-place-*` keys in `windows.json`), lays the
+overlays out from the anchor whenever it changes (polled every 0.5s while
+overlays are showing, via the microsecond native lookup), and turns a user's
+drag or resize into a new placement, ignoring the moves it makes itself. The
+build prompt's temporary growth of the odds window works from the scaled size.
+
+**Verify:** vitest for the layout maths (defaults, moved and resized game
+window, a drag round-tripping, clamping). Then live in windowed mode: move and
+resize the game window; the overlays follow and stay inside it; drag one while
+unlocked and it keeps its place relative to the game.
+
+### M15 — Overlays scale with the game window ✅ done
+
+`overlayScale(anchorHeight, userScale)`; window sizes multiplied out, content
+via `setZoomFactor`; the renderer's CSS zoom removed.
+
+**Verify:** vitest for the scale (fullscreen 1.0, the floor, the Size slider).
+Live screenshots: fullscreen unchanged from today, a 1920x1080 window with
+proportionally smaller overlays still readable, and the build sidebar's minion
+tooltips still positioned right under the new zoom.
+
+## Risks
+
+- A window's own `setBounds` fires the same `moved` event as a drag; the
+  layout code must tell them apart or every follow would be saved as a drag.
+- The 0.6 floor is a judgement call about readability at 720 DIP; it's one
+  constant if it needs tuning.
+
+## Status (2026-11-13, overlays)
+
+M14 and M15 done and confirmed live in windowed mode. Two things the first live
+look found: the overlays lagged a dragged window (the follow poll went from
+500ms to 50ms; a look is a microsecond) and the highlight boxes stayed where the
+window had been (the highlight layer now moves in the same loop). Scaling to
+0.6 then cut the lobby list short, because CSS zoom doesn't adjust `vh`; the
+overlay styles use a zoom-corrected `--vh`.

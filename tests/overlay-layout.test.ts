@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PLACEMENTS, place, placementOf, sameRect } from '../src/main/overlayLayout'
+import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect } from '../src/main/overlayLayout'
 
 /**
  * The overlays must sit at the inside edges of the game window and move with
@@ -60,5 +60,20 @@ describe('overlay layout', () => {
     const a = { x: 10, y: 10, width: 100, height: 100 }
     expect(sameRect(a, { x: 11, y: 9, width: 101, height: 100 })).toBe(true)
     expect(sameRect(a, { x: 20, y: 10, width: 100, height: 100 })).toBe(false)
+  })
+
+  it('is full size in fullscreen and shrinks with the window, down to a readable floor', () => {
+    expect(overlayScale(fullscreen.height, 1)).toBe(1)
+    expect(overlayScale(1080, 1)).toBe(0.75)
+    expect(overlayScale(windowed.height, 1)).toBe(0.6) // 721/1440 is ~0.5, under the floor
+    expect(overlayScale(fullscreen.height, 1.2)).toBeCloseTo(1.2) // the Size setting multiplies on top
+  })
+
+  it('shrinks the lobby list in a 1920x1080 window instead of covering the game', () => {
+    // Seen live: at full size it filled most of the window's height and a big
+    // slice of its width.
+    const lobby = place(DEFAULT_PLACEMENTS.lobby, windowed, overlayScale(windowed.height, 1))
+    expect(lobby.width).toBe(174)
+    expect(lobby.height).toBe(432)
   })
 })

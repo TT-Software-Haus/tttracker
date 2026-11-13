@@ -60,6 +60,19 @@ export function placementOf(b: Rect, anchor: Rect, scale: number): Placement {
   }
 }
 
+/**
+ * How big the overlays are drawn: in proportion to the game window's height,
+ * times the Size setting. 1440 is the fullscreen height (in DIPs) of the 4K,
+ * 150% monitor they were designed on, so fullscreen there looks as it always
+ * did; a 1920x1080 window there (720 DIPs high) would be 0.5, which is where
+ * text stops being comfortably readable, hence the floor.
+ */
+export const REFERENCE_HEIGHT = 1440
+export const MIN_SCALE = 0.6
+export function overlayScale(anchorHeight: number, userScale: number) {
+  return Math.max(MIN_SCALE, anchorHeight / REFERENCE_HEIGHT) * userScale
+}
+
 /** Within a couple of pixels: DIP/physical rounding can nudge bounds we set ourselves. */
 export function sameRect(a: Rect | undefined, b: Rect | undefined, slack = 2) {
   if (!a || !b) return false

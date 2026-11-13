@@ -5,7 +5,7 @@ import { Tracker } from './tracker'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { initCapture } from './vision/stream'
-import { DEFAULT_PLACEMENTS, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
+import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
@@ -83,15 +83,31 @@ function placementFor(kind: OverlayKind): Placement {
   return kind === 'odds' ? { ...p, height: p.height + promptExtra() } : p
 }
 
+const scaleNow = () => overlayScale(anchor?.height ?? 0, store.settings.overlay.scale)
+
 function layoutOverlays() {
   if (!anchor) return
+  const scale = scaleNow()
   for (const kind of KINDS) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
-    const b = place(placementFor(kind), anchor, 1)
+    const b = place(placementFor(kind), anchor, scale)
     placedAt[kind] = b
     if (!sameRect(b, win.getBounds(), 0)) win.setBounds(b)
+    sendZoom(win, scale)
   }
+}
+
+/**
+ * The window is sized by the scale; the content zooms to match. Sent per window
+ * rather than set with webContents.setZoomFactor, because Chromium shares a
+ * zoom level across every window of the same origin, the main window included.
+ */
+const zoomSent = new WeakMap<BrowserWindow, number>()
+function sendZoom(win: BrowserWindow, zoom: number) {
+  if (zoomSent.get(win) === zoom) return
+  zoomSent.set(win, zoom)
+  win.webContents.send('overlay:zoom', zoom)
 }
 
 /** A move or resize this code didn't make is the user's: remember it relative to the game. */
@@ -100,14 +116,14 @@ function onOverlayMoved(kind: OverlayKind) {
   if (!win || win.isDestroyed() || !anchor) return
   const b = win.getBounds()
   if (sameRect(b, placedAt[kind])) return
-  const p = placementOf(b, anchor, 1)
+  const p = placementOf(b, anchor, scaleNow())
   store.setPlacement(kind, kind === 'odds' ? { ...p, height: p.height - promptExtra() } : p)
   placedAt[kind] = b
 }
 
 function createOverlay(kind: OverlayKind) {
   anchor ??= screen.getPrimaryDisplay().workArea
-  const b = place(placementFor(kind), anchor, 1)
+  const b = place(placementFor(kind), anchor, scaleNow())
   const win = new BrowserWindow({
     ...b,
     frame: false,
@@ -124,6 +140,11 @@ function createOverlay(kind: OverlayKind) {
   win.setVisibleOnAllWorkspaces(true)
   win.on('moved', () => onOverlayMoved(kind))
   win.on('resized', () => onOverlayMoved(kind))
+  // A fresh page hasn't had its zoom yet.
+  win.webContents.on('did-finish-load', () => {
+    zoomSent.delete(win)
+    sendZoom(win, scaleNow())
+  })
   loadPage(win, 'overlay', `?kind=${kind}`)
   overlays[kind] = win
 }
@@ -300,6 +321,8 @@ function registerIpc() {
     if (patch.simIterations) tracker.setSimIterations(patch.simIterations)
     // Republish so a change to debugHighlights boxes (or unboxes) the tavern now.
     tracker.publish()
+    // The Size setting is part of the overlays' scale.
+    layoutOverlays()
     updateOverlays()
     broadcast('settings:changed', store.settings)
     return store.settings
