@@ -51,9 +51,16 @@ export async function stopVision() {
   await w?.terminate()
 }
 
-/** The Hearthstone window, or undefined if it isn't running or is minimised. */
-async function captureGameWindow() {
-  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 2560, height: 1440 } })
+/**
+ * The Hearthstone window, or undefined if it isn't running or is minimised.
+ *
+ * getSources() renders a thumbnail of *every* open window at this size and
+ * there's no asking for just one. Measured with 24 windows open: 227MB per
+ * call at 2560x1440, 57MB at 1280x720. So callers ask for the smallest size
+ * that does the job.
+ */
+async function captureGameWindow(size: { width: number; height: number }) {
+  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: size })
   const hs = sources.find((s) => s.name === 'Hearthstone')
   return hs && !hs.thumbnail.isEmpty() ? hs.thumbnail : undefined
 }
@@ -64,7 +71,8 @@ async function captureGameWindow() {
  * "don't know" rather than "no tribes", and try again.
  */
 export async function readLobbyTribes(cacheDir: string): Promise<string[]> {
-  const shot = await captureGameWindow()
+  // Full size: tesseract needs crisp text, and this only runs during hero select.
+  const shot = await captureGameWindow({ width: 2560, height: 1440 })
   if (!shot) return []
   const { width, height } = shot.getSize()
   const rect = findBannerRect(shot.toBitmap(), width, height)
@@ -89,7 +97,9 @@ export interface ShopGeometry {
  * capture is resized to a fixed height and is rarely 1:1 with the real window.
  */
 export async function readShopSlots(): Promise<ShopGeometry | undefined> {
-  const shot = await captureGameWindow()
+  // Small: this runs every second or two through a shop phase, and the shields
+  // are found just as well at 720p (real 4K frames scaled down agreed to 3px).
+  const shot = await captureGameWindow({ width: 1280, height: 720 })
   if (!shot) return undefined
   const { width, height } = shot.getSize()
   const slots = findShopSlots(shot.toBitmap(), width, height)
