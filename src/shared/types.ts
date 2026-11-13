@@ -117,6 +117,10 @@ export interface BgSnapshot {
   combat?: CombatRound
   rounds: CombatRound[]
   placement?: number
+  /** The build being followed this game, if one was chosen. */
+  selectedBuild?: Build
+  /** Builds worth offering: set once after the hero is picked, cleared once answered. */
+  buildPrompt?: Build[]
 }
 
 export interface BgMatch {

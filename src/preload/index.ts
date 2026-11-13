@@ -24,6 +24,7 @@ const api = {
   builds: (): Promise<Build[]> => ipcRenderer.invoke('builds:list'),
   saveBuild: (b: Build): Promise<void> => ipcRenderer.invoke('builds:save', b),
   deleteBuild: (id: string): Promise<void> => ipcRenderer.invoke('builds:delete', id),
+  selectBuild: (id: string | null): Promise<void> => ipcRenderer.invoke('builds:select', id),
 
   settings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:update', patch),

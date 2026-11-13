@@ -1557,3 +1557,46 @@ a {
 .ov-lobby .lobby-board {
   padding: 2px 8px 8px 30px;
 }
+
+/* The build prompt is the only interactive thing in an overlay, so it gets a
+   stronger surface than the passive cards it sits above. */
+.ov-prompt {
+  margin-bottom: 8px;
+  border-color: var(--accent);
+}
+.ov-prompt .ov-head {
+  margin-bottom: 8px;
+}
+.ov-prompt-skip {
+  margin-left: auto;
+}
+.ov-prompt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* Overlay windows are a fixed size, so a long build list has to scroll —
+     otherwise options past the window edge are silently unclickable. */
+  max-height: 40vh;
+  overflow-y: auto;
+}
+.ov-prompt-build {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.ov-prompt-build:hover {
+  border-color: var(--accent);
+  background: rgba(240, 178, 50, 0.12);
+}
+.ov-prompt-build .muted {
+  margin-left: auto;
+}

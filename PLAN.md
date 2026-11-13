@@ -85,6 +85,15 @@ answer/dismiss.
 **Verify:** replay a fixture log through the tracker with a matching build
 configured; prompt appears once, selection sticks, clears on game over.
 
+**Status: code complete, needs one live game.** Verified: the offer gate
+(`buildsToOffer`, 8 tests — won't fire before hero pick, after an answer, out
+of game, or with no tribe match), and the overlay prompt driven in Playwright
+(both builds render, the lobby overlay correctly ignores it, clicks dispatch
+`b1` then `null`, and it fits the 440×170 default window with no overflow).
+**Outstanding:** that the odds overlay actually becomes clickable mid-game —
+`setIgnoreMouseEvents(false)` while a prompt is up can only be tested against
+a real game. Same live session as M2's calibration.
+
 ### M4 — Build sidebar overlay
 
 Third overlay window (`kind=build`), same machinery as odds/lobby: own entry in

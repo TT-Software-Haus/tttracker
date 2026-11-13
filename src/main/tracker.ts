@@ -9,7 +9,25 @@ import { checkLogConfig, ensureLogConfig, findActiveLogDir, findInstallPath, ins
 import { LogTail, lastGameOffset } from './logs/logTail'
 import { readLobbyTribes, stopVision } from './vision/heroSelect'
 import type { Store } from './store'
-import type { BgSnapshot, SetupStatus } from '../shared/types'
+import type { BgSnapshot, Build, SetupStatus } from '../shared/types'
+
+/**
+ * Which builds to put in front of the player, or `undefined` for "don't ask".
+ *
+ * This runs on every snapshot — up to ~17 times a second — so every condition
+ * here is about *not* interrupting: ask only once the hero is locked in, only
+ * for tribes actually in this lobby, and never again once answered. Getting it
+ * wrong means either nagging mid-fight or never offering at all.
+ */
+export function buildsToOffer(
+  builds: Build[],
+  tribes: string[],
+  state: { heroPicked: boolean; answered: boolean; hasSelection: boolean; inGame: boolean },
+): Build[] | undefined {
+  if (!state.heroPicked || state.answered || state.hasSelection || !state.inGame) return undefined
+  const matching = builds.filter((b) => tribes.includes(b.tribe))
+  return matching.length ? matching : undefined
+}
 
 /**
  * Finds the logs, tails Power.log, feeds the game model and publishes
@@ -52,7 +70,10 @@ export class Tracker extends EventEmitter {
   private lastSnapshot?: BgSnapshot
   /** Tribes read off the hero-select screen; merged with the ones the log reveals later. */
   private screenTribes: string[] = []
-  private tribesRead = false
+  private heroPicked = false
+  private selectedBuildId?: string
+  /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
+  private buildPromptAnswered = false
 
   constructor(
     private store: Store,
@@ -80,14 +101,19 @@ export class Tracker extends EventEmitter {
         this.overSince = undefined
         this.endedDuringReplay = false
         this.screenTribes = []
-        this.tribesRead = false
+        this.heroPicked = false
+        this.selectedBuildId = undefined
+        this.buildPromptAnswered = false
       }
       // In Battlegrounds the mulligan *is* the hero choice, so DONE means the
       // hero is locked and the minion-type banner is still on screen. This is
       // the only moment the full tribe list is knowable — the log doesn't carry
       // it, and the first shop only reveals part of it.
-      if (e.type === 'tag' && e.tag === 'MULLIGAN_STATE' && e.value === 'DONE' && !this.tribesRead && !this.catchingUp) {
-        if (e.entity === this.game.playerEntity(this.game.friendlyPlayerId)) this.readTribesFromScreen()
+      if (e.type === 'tag' && e.tag === 'MULLIGAN_STATE' && e.value === 'DONE' && !this.heroPicked && !this.catchingUp) {
+        if (e.entity === this.game.playerEntity(this.game.friendlyPlayerId)) {
+          this.heroPicked = true
+          this.readTribesFromScreen()
+        }
       }
       if (e.type === 'gameEnd') {
         this.endedDuringReplay = this.catchingUp
@@ -129,6 +155,13 @@ export class Tracker extends EventEmitter {
 
   setSimIterations(n: number) {
     this.bg.simIterations = n
+  }
+
+  /** Choose a build for this game, or `null` to dismiss the prompt without one. */
+  selectBuild(id: string | null) {
+    this.selectedBuildId = id ?? undefined
+    this.buildPromptAnswered = true
+    this.publish()
   }
 
   // ------------------------------------------------------------- log plumbing
@@ -199,7 +232,6 @@ export class Tracker extends EventEmitter {
    * parsing, and an empty result just means we fall back to the log's view.
    */
   private readTribesFromScreen() {
-    this.tribesRead = true
     void readLobbyTribes(this.cacheDir)
       .then((tribes) => {
         if (!tribes.length) return
@@ -247,7 +279,14 @@ export class Tracker extends EventEmitter {
       status = 'in-game'
     }
     const tribes = this.screenTribes.length ? [...new Set([...base.tribes, ...this.screenTribes])].sort() : base.tribes
-    const snap: BgSnapshot = { ...base, status, statusDetail, tribes }
+    const selectedBuild = this.store.builds.find((b) => b.id === this.selectedBuildId)
+    const buildPrompt = buildsToOffer(this.store.builds, tribes, {
+      heroPicked: this.heroPicked,
+      answered: this.buildPromptAnswered,
+      hasSelection: !!selectedBuild,
+      inGame: status === 'in-game',
+    })
+    const snap: BgSnapshot = { ...base, status, statusDetail, tribes, selectedBuild, buildPrompt }
     this.lastSnapshot = snap
     this.emit('snapshot', snap)
   }

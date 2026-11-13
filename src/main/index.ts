@@ -79,12 +79,17 @@ function createOverlay(kind: OverlayKind) {
 function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   const o = store.settings.overlay
   const inGame = snap.status === 'in-game' || snap.status === 'game-over'
+  // The build prompt is the one overlay thing you have to click, so the odds
+  // window stops being click-through for as long as it's up — and goes back to
+  // whatever lock setting was in force the moment it's answered.
+  const prompting = !!snap.buildPrompt?.length
   for (const kind of ['odds', 'lobby'] as const) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
-    const wanted = o.enabled && (kind === 'odds' ? o.showOdds : o.showLobby) && (inGame || !o.locked)
-    win.setIgnoreMouseEvents(o.locked, { forward: true })
-    win.setFocusable(!o.locked)
+    const clickable = kind === 'odds' && prompting
+    const wanted = o.enabled && (kind === 'odds' ? o.showOdds || prompting : o.showLobby) && (inGame || !o.locked)
+    win.setIgnoreMouseEvents(o.locked && !clickable, { forward: true })
+    win.setFocusable(!o.locked || clickable)
     win.setOpacity(o.opacity)
     if (wanted && !win.isVisible()) win.showInactive()
     if (!wanted && win.isVisible()) win.hide()
@@ -117,6 +122,7 @@ function registerIpc() {
   ipcMain.handle('builds:list', () => store.builds)
   ipcMain.handle('builds:save', (_e, b: Build) => store.saveBuild(b))
   ipcMain.handle('builds:delete', (_e, id: string) => store.deleteBuild(id))
+  ipcMain.handle('builds:select', (_e, id: string | null) => tracker.selectBuild(id))
 
   ipcMain.handle('cards:pool', () => tracker.cards.pool())
 

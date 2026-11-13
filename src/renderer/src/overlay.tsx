@@ -2,8 +2,8 @@ import { createRoot } from 'react-dom/client'
 import { useState } from 'react'
 import './styles.css'
 import { HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
-import { currentSession, useMatches, useSettings, useSnapshot } from './lib'
-import type { BgSnapshot } from '../../shared/types'
+import { TRIBES, currentSession, sortedTargets, tribeLabel, useMatches, useSettings, useSnapshot } from './lib'
+import type { BgSnapshot, Build } from '../../shared/types'
 
 const kind = new URLSearchParams(location.search).get('kind') === 'lobby' ? 'lobby' : 'odds'
 
@@ -15,7 +15,33 @@ function Overlay() {
   return (
     <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale }}>
       {!locked && <div className="ov-drag">Drag to position · lock in Setup</div>}
+      {snap?.buildPrompt?.length && kind === 'odds' ? <BuildPrompt builds={snap.buildPrompt} /> : null}
       {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : <LobbyOverlay snap={snap} />)}
+    </div>
+  )
+}
+
+/** Offered once, right after the hero is locked in. Dismissing is a real answer. */
+function BuildPrompt({ builds }: { builds: Build[] }) {
+  return (
+    <div className="ov-card ov-enter ov-prompt">
+      <div className="ov-head">
+        <b>Going for a build?</b>
+        <button className="btn btn-sm ov-prompt-skip" onClick={() => void window.api.selectBuild(null)}>
+          Not this game
+        </button>
+      </div>
+      <div className="ov-prompt-list">
+        {builds.map((b) => (
+          <button key={b.id} className="ov-prompt-build" onClick={() => void window.api.selectBuild(b.id)}>
+            <span className="tribe" style={{ ['--tc' as string]: TRIBES[b.tribe]?.color ?? 'var(--accent)' }}>
+              {tribeLabel(b.tribe)}
+            </span>
+            <b>{b.name}</b>
+            <span className="muted small">{sortedTargets(b).at(-1)?.byTurn ?? 0} turns</span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
