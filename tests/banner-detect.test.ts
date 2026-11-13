@@ -34,6 +34,7 @@ describe('finding the hero-select banner', () => {
   }
 
   it('finds a plate in the upper area', () => {
+    // No lettering drawn, so the box stays the whole plate.
     const rect = findBannerRect(frame({ x: 100, y: 40, w: 180, h: 50 }), W, H)
     expect(rect).toEqual({ x: 100, y: 40, width: 180, height: 50 })
   })
@@ -42,6 +43,29 @@ describe('finding the hero-select banner', () => {
     // The real frame had it far right of centre; that must not matter.
     const rect = findBannerRect(frame({ x: 210, y: 30, w: 180, h: 40 }), W, H)
     expect(rect?.x).toBe(210)
+    expect(rect?.width).toBe(180)
+  })
+
+  it('shrinks to the lettering, leaving the emblems out', () => {
+    // At 1080p the gold emblems sitting on the plate cost a whole tribe, so the
+    // box tightens onto text-coloured pixels only.
+    const buf = frame({ x: 60, y: 30, w: 300, h: 60 })
+    const put = (x: number, y: number, b: number, g: number, r: number) => {
+      const i = (y * W + x) * 4
+      buf[i] = b
+      buf[i + 1] = g
+      buf[i + 2] = r
+    }
+    // Gold emblem on the left of the plate: bright, but almost no blue.
+    for (let y = 35; y < 80; y++) for (let x = 65; x < 110; x++) put(x, y, 96, 151, 178)
+    // Lettering on the right: blue well above green.
+    for (let y = 45; y < 65; y++) for (let x = 200; x < 300; x++) put(x, y, 229, 144, 226)
+    const rect = findBannerRect(buf, W, H)
+    expect(rect).toEqual({ x: 200, y: 45, width: 100, height: 20 })
+  })
+
+  it('keeps the plate when there is no lettering to find', () => {
+    const rect = findBannerRect(frame({ x: 100, y: 40, w: 180, h: 50 }), W, H)
     expect(rect?.width).toBe(180)
   })
 

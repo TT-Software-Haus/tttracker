@@ -59,8 +59,57 @@ export function findBannerRect(bgra: Buffer, width: number, height: number): Rec
     }
   }
   if (maxX <= minX) return undefined
-  // Bounds are inclusive, hence the +1. Deliberately not padded beyond that —
-  // adding even 10px of margin drags in enough noise to cost two of the five
-  // tribes.
-  return { x: minX, y: top, width: maxX - minX + 1, height: bottom - top + 1 }
+  return tightenToText(bgra, width, { x: minX, y: top, width: maxX - minX + 1, height: bottom - top + 1 })
+}
+
+/**
+ * Shrink a plate rect to just the writing on it.
+ *
+ * The plate has the two round emblems sitting on top of it, and at 1080p
+ * including them cost a tribe: tesseract read "Dragons, Murlocs, Pir" and
+ * stopped. They're gold — measured at [178,151,96] and [215,127,92], blue
+ * around 95 — where the lettering is [226,144,229] with blue well above green.
+ * That one comparison separates them.
+ *
+ * Bounds are inclusive, hence the +1s. Deliberately unpadded: adding even 10px
+ * of margin drags in enough noise to cost two of the five tribes.
+ */
+function tightenToText(bgra: Buffer, width: number, rect: Rect): Rect {
+  const isText = (i: number) => {
+    const b = bgra[i]
+    const g = bgra[i + 1]
+    const r = bgra[i + 2]
+    return r > 170 && b > 170 && b > g
+  }
+  // Count per column and per row, then keep only those with a real run of
+  // lettering. A single bright speck — the emblems carry specular highlights
+  // that pass the colour test — must not widen the box by 200px.
+  const colHits = new Array<number>(rect.width).fill(0)
+  const rowHits = new Array<number>(rect.height).fill(0)
+  for (let y = 0; y < rect.height; y++) {
+    const row = (rect.y + y) * width * 4
+    for (let x = 0; x < rect.width; x++) {
+      if (!isText(row + (rect.x + x) * 4)) continue
+      colHits[x]++
+      rowHits[y]++
+    }
+  }
+  const span = (hits: number[], min: number) => {
+    const first = hits.findIndex((n) => n >= min)
+    if (first < 0) return undefined
+    let last = hits.length - 1
+    while (last > first && hits[last] < min) last--
+    return [first, last] as const
+  }
+  const xs = span(colHits, 3)
+  const ys = span(rowHits, 3)
+  if (!xs || !ys) return rect
+  const minX = rect.x + xs[0]
+  const maxX = rect.x + xs[1]
+  const minY = rect.y + ys[0]
+  const maxY = rect.y + ys[1]
+
+  // No lettering found: hand back the plate and let the OCR decide.
+  if (maxX <= minX || maxY <= minY) return rect
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
 }

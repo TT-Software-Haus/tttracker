@@ -12,20 +12,36 @@ let worker: Worker | undefined
  * launch it from — possibly read-only, and never the same place twice.
  */
 async function getWorker(cacheDir: string) {
-  if (!worker) {
-    worker = await createWorker('eng', undefined, { cachePath: cacheDir })
-    // These two are what make the read repeatable. On the default settings
-    // tesseract runs layout analysis over the crop, and on a real frame a
-    // *one pixel* difference in the box was enough to lose a tribe. SPARSE_TEXT
-    // makes no layout assumption, and the whitelist stops the banner's
-    // decorative flourishes being read as letters. With both, every crop from
-    // the detected box out to a 1920x245 band reads all five tribes.
-    await worker.setParameters({
-      tessedit_pageseg_mode: PSM.SPARSE_TEXT,
+  worker ??= await createWorker('eng', undefined, { cachePath: cacheDir })
+  return worker
+}
+
+/**
+ * Read the crop twice, under two different page-segmentation modes, and take
+ * everything either pass found.
+ *
+ * Neither mode is reliable alone, measured on real frames: SPARSE_TEXT ignores
+ * layout and is steady against small crop changes, but dropped the last word
+ * on a 1080p banner ("Dragons, Murlocs, Pir"). AUTO read that frame perfectly
+ * but is the mode where a one-pixel change to the box once cost a tribe.
+ *
+ * Merging is safe because the parser only accepts words close to a real tribe
+ * name — it ignores the rest of the screen's wording — so a pass that reads
+ * badly contributes nothing rather than contributing nonsense.
+ */
+async function readTribes(cacheDir: string, png: Buffer): Promise<string[]> {
+  const w = await getWorker(cacheDir)
+  const found = new Set<string>()
+  for (const psm of [PSM.SPARSE_TEXT, PSM.AUTO]) {
+    await w.setParameters({
+      tessedit_pageseg_mode: psm,
+      // Stops the banner's flourishes being read as letters.
       tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz, ',
     })
+    const { data } = await w.recognize(png)
+    for (const t of parseTribeBanner(data.text)) found.add(t)
   }
-  return worker
+  return [...found].sort()
 }
 
 export async function stopVision() {
@@ -54,6 +70,5 @@ export async function readLobbyTribes(cacheDir: string): Promise<string[]> {
   if (!rect) return []
   const crop = shot.crop(rect)
   if (crop.isEmpty()) return []
-  const { data } = await (await getWorker(cacheDir)).recognize(crop.toPNG())
-  return parseTribeBanner(data.text)
+  return readTribes(cacheDir, crop.toPNG())
 }

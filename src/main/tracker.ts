@@ -246,7 +246,7 @@ export class Tracker extends EventEmitter {
    * parsing, and giving up just means falling back to the log's own tribe list.
    */
   private startTribeRead() {
-    if (this.tribeTimer || this.screenTribes.length) return
+    if (this.tribeTimer) return
     let attempts = 0
     const tick = async () => {
       this.tribeTimer = undefined
@@ -256,9 +256,15 @@ export class Tracker extends EventEmitter {
         return [] as string[]
       })
       if (tribes.length) {
-        this.screenTribes = tribes
-        this.publish()
-        return
+        // Accumulate rather than take the first answer. A capture during the
+        // plate's slide-in, or one the OCR only half-read, gives a partial
+        // list; a later pass fills it in. Tribes never leave a lobby, so
+        // growing the set is always right.
+        const merged = [...new Set([...this.screenTribes, ...tribes])].sort()
+        if (merged.length !== this.screenTribes.length) {
+          this.screenTribes = merged
+          this.publish()
+        }
       }
       // Stop once the hero is locked in: the banner has gone, and anything we
       // read after that is some other screen.
