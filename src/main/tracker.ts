@@ -7,6 +7,7 @@ import { Game } from './game/game'
 import { BgGame } from './bg/bgGame'
 import { checkLogConfig, ensureLogConfig, findActiveLogDir, findInstallPath, installLooksValid, logConfigPath } from './logs/hsPaths'
 import { LogTail, lastGameOffset } from './logs/logTail'
+import { readLobbyTribes, stopVision } from './vision/heroSelect'
 import type { Store } from './store'
 import type { BgSnapshot, SetupStatus } from '../shared/types'
 
@@ -49,6 +50,9 @@ export class Tracker extends EventEmitter {
   }
   private logConfigOk = false
   private lastSnapshot?: BgSnapshot
+  /** Tribes read off the hero-select screen; merged with the ones the log reveals later. */
+  private screenTribes: string[] = []
+  private tribesRead = false
 
   constructor(
     private store: Store,
@@ -75,6 +79,15 @@ export class Tracker extends EventEmitter {
       if (e.type === 'gameStart') {
         this.overSince = undefined
         this.endedDuringReplay = false
+        this.screenTribes = []
+        this.tribesRead = false
+      }
+      // In Battlegrounds the mulligan *is* the hero choice, so DONE means the
+      // hero is locked and the minion-type banner is still on screen. This is
+      // the only moment the full tribe list is knowable — the log doesn't carry
+      // it, and the first shop only reveals part of it.
+      if (e.type === 'tag' && e.tag === 'MULLIGAN_STATE' && e.value === 'DONE' && !this.tribesRead && !this.catchingUp) {
+        if (e.entity === this.game.playerEntity(this.game.friendlyPlayerId)) this.readTribesFromScreen()
       }
       if (e.type === 'gameEnd') {
         this.endedDuringReplay = this.catchingUp
@@ -111,6 +124,7 @@ export class Tracker extends EventEmitter {
   stop() {
     if (this.dirTimer) clearInterval(this.dirTimer)
     this.powerTail?.stop()
+    void stopVision()
   }
 
   setSimIterations(n: number) {
@@ -180,6 +194,21 @@ export class Tracker extends EventEmitter {
     this.publish()
   }
 
+  /**
+   * Fire-and-forget: a slow or failed screen read must never hold up log
+   * parsing, and an empty result just means we fall back to the log's view.
+   */
+  private readTribesFromScreen() {
+    this.tribesRead = true
+    void readLobbyTribes(this.cacheDir)
+      .then((tribes) => {
+        if (!tribes.length) return
+        this.screenTribes = tribes
+        this.publish()
+      })
+      .catch((err) => console.warn('could not read tribes from the hero-select screen', err))
+  }
+
   // ------------------------------------------------------------- snapshots
 
   private schedulePublish() {
@@ -217,7 +246,8 @@ export class Tracker extends EventEmitter {
     } else {
       status = 'in-game'
     }
-    const snap: BgSnapshot = { ...base, status, statusDetail }
+    const tribes = this.screenTribes.length ? [...new Set([...base.tribes, ...this.screenTribes])].sort() : base.tribes
+    const snap: BgSnapshot = { ...base, status, statusDetail, tribes }
     this.lastSnapshot = snap
     this.emit('snapshot', snap)
   }
