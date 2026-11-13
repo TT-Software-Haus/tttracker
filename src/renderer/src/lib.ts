@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { BgMatch, BgSnapshot, Build, CardInfo, GameMode, Settings } from '../../shared/types'
+import type { BgMatch, BgSnapshot, BoardMinion, Build, CardInfo, GameMode, Settings } from '../../shared/types'
 
 export const TRIBES: Record<string, { label: string; color: string }> = {
   BEAST: { label: 'Beasts', color: '#c98a3c' },
@@ -105,6 +105,34 @@ export function useBuilds() {
 export function sortedTargets(b: Build) {
   return [...b.targets].sort((x, y) => x.byTurn - y.byTurn)
 }
+
+/**
+ * Where you are against a build on a given turn: the stage you're working
+ * towards, and which of its minions you already have.
+ *
+ * The stage is the first one you haven't reached the deadline for; once every
+ * deadline has passed you stay on the last one rather than running out of
+ * advice. Golden copies count — a golden Tidecaller is still a Tidecaller, and
+ * telling someone they're missing a minion they tripled would be absurd.
+ */
+export function buildProgress(build: Build, round: number, board: BoardMinion[]) {
+  const stages = sortedTargets(build)
+  const stage = stages.find((t) => t.byTurn >= round) ?? stages.at(-1)
+  if (!stage) return undefined
+  const owned = new Set(board.map((m) => baseCardId(m.cardId)))
+  const minions = stage.cardIds.map((cardId) => ({ cardId, have: owned.has(baseCardId(cardId)) }))
+  return {
+    stage,
+    minions,
+    have: minions.filter((m) => m.have).length,
+    turnsLeft: stage.byTurn - round,
+    /** The last stage, i.e. there's nothing further to work towards. */
+    final: stage === stages.at(-1),
+  }
+}
+
+/** Golden minions carry a `_G` card id; they're the same minion for our purposes. */
+const baseCardId = (id: string) => id.replace(/_G$/, '')
 
 let poolCache: Promise<CardInfo[]> | undefined
 export function usePool() {

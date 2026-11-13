@@ -5,7 +5,7 @@ import type { BgMatch, Build, Settings } from '../shared/types'
 const DEFAULT_SETTINGS: Settings = {
   hearthstonePath: '',
   simIterations: 5000,
-  overlay: { enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, locked: true },
+  overlay: { enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, showBuild: true, locked: true },
 }
 
 /** Tiny JSON-file persistence. Writes are debounced and atomic (write temp + rename). */

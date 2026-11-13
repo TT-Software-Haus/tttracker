@@ -8,7 +8,7 @@ import type { BgSnapshot, Build, Settings } from '../shared/types'
 let store: Store
 let tracker: Tracker
 let mainWin: BrowserWindow | undefined
-type OverlayKind = 'odds' | 'lobby'
+type OverlayKind = 'odds' | 'lobby' | 'build'
 const overlays: Partial<Record<OverlayKind, BrowserWindow>> = {}
 
 const preload = join(__dirname, '../preload/index.cjs')
@@ -57,7 +57,10 @@ function createOverlay(kind: OverlayKind) {
   const defaults =
     kind === 'odds'
       ? { width: 440, height: 170, x: area.x + Math.round(area.width / 2 - 220), y: area.y + 8 }
-      : { width: 290, height: Math.min(720, area.height - 140), x: area.x + 16, y: area.y + 90 }
+      : kind === 'build'
+        ? // Right-hand side, opposite the lobby list.
+          { width: 240, height: Math.min(520, area.height - 180), x: area.x + area.width - 256, y: area.y + 90 }
+        : { width: 290, height: Math.min(720, area.height - 140), x: area.x + 16, y: area.y + 90 }
   const win = new BrowserWindow({
     ...defaults,
     ...(saved ?? {}),
@@ -84,11 +87,14 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   // window stops being click-through for as long as it's up — and goes back to
   // whatever lock setting was in force the moment it's answered.
   const prompting = !!snap.buildPrompt?.length
-  for (const kind of ['odds', 'lobby'] as const) {
+  for (const kind of ['odds', 'lobby', 'build'] as const) {
     const win = overlays[kind]
     if (!win || win.isDestroyed()) continue
     const clickable = kind === 'odds' && prompting
-    const wanted = o.enabled && (kind === 'odds' ? o.showOdds || prompting : o.showLobby) && (inGame || !o.locked)
+    // The build sidebar has nothing to say until a build is chosen, so unlike
+    // the others it stays hidden even when its toggle is on.
+    const on = kind === 'odds' ? o.showOdds || prompting : kind === 'lobby' ? o.showLobby : o.showBuild && !!snap.selectedBuild
+    const wanted = o.enabled && on && (inGame || !o.locked)
     win.setIgnoreMouseEvents(o.locked && !clickable, { forward: true })
     win.setFocusable(!o.locked || clickable)
     win.setOpacity(o.opacity)
@@ -154,6 +160,7 @@ app.whenReady().then(async () => {
   createMainWindow()
   createOverlay('odds')
   createOverlay('lobby')
+  createOverlay('build')
   await tracker.start()
   broadcast('data:changed')
   updateOverlays()

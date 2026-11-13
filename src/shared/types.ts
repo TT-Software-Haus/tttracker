@@ -182,6 +182,7 @@ export interface OverlaySettings {
   scale: number
   showOdds: boolean
   showLobby: boolean
+  showBuild: boolean
   /** When locked the overlays ignore the mouse (click-through). */
   locked: boolean
 }

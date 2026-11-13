@@ -1679,3 +1679,56 @@ a {
   border: 1px solid var(--border);
   background: #222 center 30% / 150% auto no-repeat;
 }
+
+/* Build sidebar: what you're aiming for, ticked off as it lands. */
+.ov-build {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: calc(100vh - 20px);
+}
+.ov-build .ov-head .muted {
+  margin-left: auto;
+}
+.ov-build-turn {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ov-build-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+}
+.ov-build-minion {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 6px 2px 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  /* Not yet found: dimmed, so the ones you still need don't shout. */
+  opacity: 0.55;
+}
+.ov-build-minion.have {
+  opacity: 1;
+  background: rgba(62, 207, 142, 0.12);
+}
+.ov-build-art {
+  width: 30px;
+  height: 22px;
+  flex: none;
+  border-radius: 4px;
+  background: #222 center 30% / 150% auto no-repeat;
+}
+.ov-build-name {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ov-build-tick {
+  margin-left: auto;
+  color: var(--win);
+  font-size: 12px;
+}

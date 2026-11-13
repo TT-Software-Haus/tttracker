@@ -1,11 +1,12 @@
 import { createRoot } from 'react-dom/client'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import './styles.css'
 import { HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
-import { TRIBES, currentSession, sortedTargets, tribeLabel, useMatches, useSettings, useSnapshot } from './lib'
+import { TRIBES, artUrl, buildProgress, currentSession, sortedTargets, tribeLabel, useMatches, usePool, useSettings, useSnapshot } from './lib'
 import type { BgSnapshot, Build } from '../../shared/types'
 
-const kind = new URLSearchParams(location.search).get('kind') === 'lobby' ? 'lobby' : 'odds'
+const param = new URLSearchParams(location.search).get('kind')
+const kind = param === 'lobby' ? 'lobby' : param === 'build' ? 'build' : 'odds'
 
 function Overlay() {
   const snap = useSnapshot()
@@ -16,7 +17,7 @@ function Overlay() {
     <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale }}>
       {!locked && <div className="ov-drag">Drag to position · lock in Setup</div>}
       {snap?.buildPrompt?.length && kind === 'odds' ? <BuildPrompt builds={snap.buildPrompt} /> : null}
-      {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : <LobbyOverlay snap={snap} />)}
+      {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : kind === 'lobby' ? <LobbyOverlay snap={snap} /> : <BuildOverlay snap={snap} />)}
     </div>
   )
 }
@@ -65,6 +66,39 @@ function OddsOverlay({ snap }: { snap: BgSnapshot }) {
     )
   }
   return snap.status === 'in-game' ? <div className="ov-card ov-card-quiet muted">Odds appear when combat starts</div> : null
+}
+
+/** What you're building towards: the current stage, ticked off against your board. */
+function BuildOverlay({ snap }: { snap: BgSnapshot }) {
+  const build = snap.selectedBuild
+  const pool = usePool()
+  const names = useMemo(() => new Map(pool.map((c) => [c.id, c.name])), [pool])
+  if (!build) return null
+  const p = buildProgress(build, Math.max(1, snap.round), snap.board)
+  if (!p) return null
+  const done = p.have === p.minions.length
+  return (
+    <div className="ov-card ov-build">
+      <div className="ov-head">
+        <b>{build.name}</b>
+        <span className="muted small">
+          {p.have}/{p.minions.length}
+        </span>
+      </div>
+      <div className={`ov-build-turn ${!done && p.turnsLeft < 0 ? 'danger' : ''}`}>
+        {done ? 'Stage complete' : p.turnsLeft > 0 ? `by turn ${p.stage.byTurn} · ${p.turnsLeft} to go` : p.turnsLeft === 0 ? `by turn ${p.stage.byTurn} · this turn` : `${-p.turnsLeft} turn${p.turnsLeft === -1 ? '' : 's'} overdue`}
+      </div>
+      <div className="ov-build-list">
+        {p.minions.map((m, i) => (
+          <div key={`${m.cardId}-${i}`} className={`ov-build-minion ${m.have ? 'have' : ''}`}>
+            <span className="ov-build-art" style={{ backgroundImage: `url(${artUrl(m.cardId)})` }} />
+            <span className="ov-build-name">{names.get(m.cardId) ?? m.cardId}</span>
+            {m.have && <span className="ov-build-tick">✓</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function LobbyOverlay({ snap }: { snap: BgSnapshot }) {
