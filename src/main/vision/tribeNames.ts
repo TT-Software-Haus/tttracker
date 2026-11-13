@@ -57,6 +57,15 @@ function nearestTribe(token: string): string | undefined {
 }
 
 /**
+ * The race code for a single word — "Quilboar" → QUILBOAR. Also used to read
+ * the tribe out of an HSReplay comp name ("Quilboar - APM Shop Buff"), which
+ * happens to use the same wording as the banner.
+ */
+export function tribeFromWord(word: string): string | undefined {
+  return nearestTribe(word.toLowerCase().replace(/[^a-z]/g, ''))
+}
+
+/**
  * Race codes read out of the hero-select banner. Returns [] when nothing in the
  * text looks like a tribe, which is how the caller tells a bad capture (wrong
  * screen, game minimised) from a real read.

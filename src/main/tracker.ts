@@ -25,7 +25,8 @@ export function buildsToOffer(
   state: { heroPicked: boolean; answered: boolean; hasSelection: boolean; inGame: boolean },
 ): Build[] | undefined {
   if (!state.heroPicked || state.answered || state.hasSelection || !state.inGame) return undefined
-  const matching = builds.filter((b) => tribes.includes(b.tribe))
+  // A build with no tribe (a Menagerie board) fits any lobby.
+  const matching = builds.filter((b) => !b.tribe || tribes.includes(b.tribe))
   return matching.length ? matching : undefined
 }
 

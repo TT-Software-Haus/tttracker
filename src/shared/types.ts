@@ -149,10 +149,31 @@ export interface BuildTarget {
 export interface Build {
   id: string
   name: string
-  /** Tribe this build is for, e.g. 'MURLOC' — matched against the lobby's tribes. */
+  /**
+   * Tribe this build is for, e.g. 'MURLOC' — matched against the lobby's
+   * tribes. Empty means it isn't tied to one tribe (a Menagerie board), so it's
+   * offered in every lobby.
+   */
   tribe: string
   /** Ordered by byTurn, earliest first. */
   targets: BuildTarget[]
+  /** Set when the build was started from someone else's published comp. */
+  source?: { name: string; url: string }
+}
+
+/** A community composition from HSReplay's Battlegrounds comps list. */
+export interface Comp {
+  id: number
+  name: string
+  /** Race code, or '' for a comp that isn't tied to one tribe. */
+  tribe: string
+  summary: string
+  /** 1 = S, 2 = A, 3 = B. */
+  tier: number
+  difficulty: number
+  /** The comp's core minions, resolved to card ids we know about. */
+  cardIds: string[]
+  url: string
 }
 
 export interface OverlaySettings {

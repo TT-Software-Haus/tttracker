@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
-import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, SetupStatus } from '../../shared/types'
+import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, Comp, SetupStatus } from '../../shared/types'
 import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips } from './components'
 import { TRIBES, artUrl, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
@@ -339,19 +339,38 @@ function PoolCard({ c }: { c: CardInfo }) {
 function BuildsPage() {
   const [builds, save, remove] = useBuilds()
   const [open, setOpen] = useState<string>()
+  const [finding, setFinding] = useState(false)
   const create = () => {
     const b: Build = { id: crypto.randomUUID(), name: 'New build', tribe: 'MURLOC', targets: [{ byTurn: 6, cardIds: [] }] }
     save(b)
+    setOpen(b.id)
+  }
+  const useComp = (c: Comp) => {
+    const b: Build = {
+      id: crypto.randomUUID(),
+      name: c.name,
+      tribe: c.tribe,
+      // The comps list gives core minions but no turn guidance, so the turn is
+      // a starting point you're meant to change.
+      targets: [{ byTurn: 8, cardIds: c.cardIds }],
+      source: { name: 'HSReplay · JeefHS', url: c.url },
+    }
+    save(b)
+    setFinding(false)
     setOpen(b.id)
   }
   return (
     <div className="page">
       <header className="page-head">
         <h1>Builds</h1>
+        <button className="btn" onClick={() => setFinding(!finding)}>
+          {finding ? 'Close' : 'Find build'}
+        </button>
         <button className="btn btn-primary" onClick={create}>
           New build
         </button>
       </header>
+      {finding && <FindBuild onUse={useComp} />}
       {!builds.length && (
         <div className="empty-hero">
           <div className="empty-icon">▣</div>
@@ -372,6 +391,52 @@ function BuildsPage() {
             <span className="muted">{open === b.id ? '▾' : '▸'}</span>
           </button>
           {open === b.id && <BuildEditor build={b} save={save} remove={remove} />}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const TIER_LABEL: Record<number, string> = { 1: 'S', 2: 'A', 3: 'B', 4: 'C', 5: 'D' }
+
+/** The published comps, as starting points. Not ours — credited and linked. */
+function FindBuild({ onUse }: { onUse: (c: Comp) => void }) {
+  const [comps, setComps] = useState<Comp[]>()
+  const [error, setError] = useState<string>()
+  useEffect(() => {
+    window.api
+      .comps()
+      .then(setComps)
+      .catch((e: Error) => setError(e.message))
+  }, [])
+  return (
+    <div className="card-box find-build">
+      <div className="box-title">
+        Battlegrounds comps
+        <a className="find-src" href="#" onClick={() => void window.api.openExternal('https://hsreplay.net/battlegrounds/comps/')}>
+          from HSReplay, tiered by JeefHS →
+        </a>
+      </div>
+      {error && <div className="muted">Couldn’t reach HSReplay ({error}). Open the link above to read the list instead.</div>}
+      {!comps && !error && <div className="muted">Loading comps…</div>}
+      {comps?.map((c) => (
+        <div key={c.id} className="comp-row">
+          <span className={`comp-tier comp-tier-${c.tier}`}>{TIER_LABEL[c.tier] ?? c.tier}</span>
+          <div className="comp-main">
+            <b>{c.name}</b>
+            <div className="muted small">{c.summary}</div>
+          </div>
+          <div className="comp-cards">
+            {c.cardIds.map((id) => (
+              <span key={id} className="comp-card" style={{ backgroundImage: `url(${artUrl(id)})` }} />
+            ))}
+          </div>
+          <a className="muted small" href="#" onClick={() => void window.api.openExternal(c.url)}>
+            Guide
+          </a>
+          <button className="btn btn-sm" onClick={() => onUse(c)}>
+            Use
+          </button>
         </div>
       ))}
     </div>
@@ -402,6 +467,7 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
       <div className="build-meta">
         <input className="input" value={build.name} onChange={(e) => patch({ name: e.target.value })} placeholder="Build name" />
         <select className="input" value={build.tribe} onChange={(e) => patch({ tribe: e.target.value })}>
+          <option value="">Any tribe</option>
           {Object.keys(TRIBES).map((t) => (
             <option key={t} value={t}>
               {tribeLabel(t)}
@@ -412,6 +478,15 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
           Delete build
         </button>
       </div>
+      {build.source && (
+        <div className="muted small">
+          Started from{' '}
+          <a href="#" onClick={() => void window.api.openExternal(build.source!.url)}>
+            {build.source.name}
+          </a>
+          . Core minions only — the turns are yours to set.
+        </div>
+      )}
 
       {build.targets.map((t, i) => (
         <div key={i} className="build-target">

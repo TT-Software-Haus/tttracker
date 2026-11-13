@@ -1600,3 +1600,58 @@ a {
 .ov-prompt-build .muted {
   margin-left: auto;
 }
+
+/* ------------------------------------------------------------- find build */
+
+.find-build {
+  margin-bottom: 12px;
+}
+.find-src {
+  margin-left: auto;
+  font-weight: 400;
+  font-size: 12px;
+}
+.comp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.comp-main {
+  min-width: 0;
+  flex: 1;
+}
+.comp-tier {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 12px;
+  color: #1a1305;
+  background: #7f93a8;
+}
+.comp-tier-1 {
+  background: var(--gold, #f0b232);
+}
+.comp-tier-2 {
+  background: var(--win);
+}
+.comp-tier-3 {
+  background: #7f93a8;
+}
+.comp-cards {
+  display: flex;
+  gap: 3px;
+  flex: none;
+}
+.comp-card {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: #222 center 30% / 150% auto no-repeat;
+}

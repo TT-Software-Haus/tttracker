@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
+import { fetchComps } from './comps'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
 
 let store: Store
@@ -123,6 +124,7 @@ function registerIpc() {
   ipcMain.handle('builds:save', (_e, b: Build) => store.saveBuild(b))
   ipcMain.handle('builds:delete', (_e, id: string) => store.deleteBuild(id))
   ipcMain.handle('builds:select', (_e, id: string | null) => tracker.selectBuild(id))
+  ipcMain.handle('comps:list', () => fetchComps(tracker.cards))
 
   ipcMain.handle('cards:pool', () => tracker.cards.pool())
 

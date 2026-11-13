@@ -107,6 +107,38 @@ of game, or with no tribe match), and the overlay prompt driven in Playwright
 `setIgnoreMouseEvents(false)` while a prompt is up can only be tested against
 a real game. Same live session as M2's calibration.
 
+### M3.5 — "Find build": import from HSReplay's comps ✅ done
+
+Added mid-flight at the user's request. `src/main/comps.ts` pulls the 33
+published Battlegrounds comps and offers them as starting points on the Builds
+page; choosing one creates a build pre-filled with the name, tribe and core
+minions, credited to HSReplay/JeefHS with a link back to the original guide.
+
+Why it works the way it does:
+
+- **No API, and node:fetch can't reach it.** Cloudflare answers 403 to
+  anything that isn't a browser, whatever headers you send — the block is on
+  the TLS fingerprint. Electron's `net` module uses Chromium's network stack
+  and gets a 200, so no hidden BrowserWindow is needed.
+- **No scraping.** The page server-renders everything into
+  `<script id="react_context">`, so it's one regex and a `JSON.parse`.
+- **Detail pages are unreachable** — they return a Cloudflare interstitial even
+  in a real browser — so the import is name + tribe + core minions. There is no
+  turn guidance in the data; the stage turn is a default you're meant to edit.
+- `comp_core_cards` are dbfIds, which `CardDb.byDbfId` already resolves.
+- Comp names read "Quilboar - APM Shop Buff", so the tribe comes from the same
+  word-matching table the OCR uses. "Menagerie" is the one comp with no tribe,
+  which is why a build may now have an empty tribe meaning "any lobby".
+
+**Verified:** 5 tests on the page contract (including that a missing blob
+throws rather than silently importing nothing); all 8 sampled dbfIds resolve to
+real minions against the live card database; the picker driven in Playwright —
+tier badges, card art, attribution link, and "Use" producing a correct build
+with its source recorded.
+
+**Expect this to break** when HSReplay restructures the page. It fails with a
+readable message and offers the link instead.
+
 ### M4 — Build sidebar overlay
 
 Third overlay window (`kind=build`), same machinery as odds/lobby: own entry in
