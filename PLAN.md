@@ -157,7 +157,7 @@ Playwright across five states — early, due this turn, overdue, complete, and n
 build selected (renders nothing) — all correct, no overflow at the default
 240x420.
 
-### M5 — Shop detection
+### M5 — Shop detection ✅ done (`5934d7f`)
 
 During shop phase the tavern minions sit in the opposing controller slot —
 `boardOf(this.dummyPlayerId())` already reads exactly that set (it's reused for
@@ -170,8 +170,21 @@ the tavern may be a different controller entirely. This milestone is a spike
 first; if the slot is wrong, parse the `BaconShop8PlayerEnchant` refresh
 trigger instead.
 
-**Verify:** new test over an existing fixture asserting shop contents at a few
-known turns; then eyeball it live.
+**Spike result: the hypothesis held, but not where I first looked.** Probing on
+the turn boundary showed the dummy slot empty, which nearly sent me to the
+screen for this too. Sampling mid-phase showed four pool minions, down to two
+by the end of the shop — the missing pair having appeared on my own board.
+
+The hazard is that the slot is shared with combat: read it one phase late and
+the warband you're fighting is presented as "on offer". The phase guard is
+tested, and the test was confirmed load-bearing by deleting the guard and
+watching it fail.
+
+**Verified:** 4 tests over the Duos fixture, sampled at 24 points so they can't
+pass by the shop simply never populating (max seen: 5 minions, exact contents
+asserted at round 6); 4 more on the in-shop flag, including that an already-owned
+minion isn't flagged when the tavern offers another copy. Sidebar driven in
+Playwright: exactly one of three target minions flagged, correctly.
 
 ### M6 — Geometric highlight over the game window
 
