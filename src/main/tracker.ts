@@ -10,7 +10,7 @@ import { LogTail, lastGameOffset } from './logs/logTail'
 import { readLobbyTribes, readShopSlots, stopVision } from './vision/heroSelect'
 import { getGameWindowRect } from './vision/gameWindow'
 import type { Store } from './store'
-import type { BgSnapshot, Build, SetupStatus } from '../shared/types'
+import type { BgSnapshot, BoardMinion, Build, SetupStatus } from '../shared/types'
 
 /**
  * Which builds to put in front of the player, or `undefined` for "don't ask".
@@ -54,6 +54,10 @@ const GAME_OVER_LINGER_MS = 30_000
 /** Hero select lasts ~70s; retry the banner read across it, then give up. */
 const TRIBE_READ_ATTEMPTS = 12
 const TRIBE_READ_INTERVAL_MS = 2500
+/** Let the tavern's cards slide into place before the first read. */
+const HIGHLIGHT_SETTLE_MS = 500
+/** How often to re-read the tavern while a wanted minion is on offer. */
+const HIGHLIGHT_POLL_MS = 1000
 const STALL_MS = 3 * 60_000
 
 function isHearthstoneRunning(): Promise<boolean> {
@@ -97,9 +101,13 @@ export class Tracker extends EventEmitter {
   private tribeTimer?: NodeJS.Timeout
   /** Boxes to draw over the tavern, in Hearthstone client coordinates. */
   private highlights: BgSnapshot['shopHighlights'] = []
-  /** What the tavern held when those boxes were worked out. */
+  /** The tavern's contents when the current boxes were wanted; a change clears them. */
   private highlightKey = ''
-  private highlightBusy = false
+  /** Wanted minions on offer right now, for the polling loop to box. */
+  private highlightTargets: (BoardMinion & { debug: boolean })[] = []
+  /** True while the loop is running, including mid-capture when no timer is set. */
+  private highlightLoop = false
+  private highlightTimer?: NodeJS.Timeout
 
   constructor(
     private store: Store,
@@ -127,8 +135,7 @@ export class Tracker extends EventEmitter {
         this.overSince = undefined
         this.endedDuringReplay = false
         this.stopTribeRead()
-        this.highlights = []
-        this.highlightKey = ''
+        this.stopHighlights()
         this.screenTribes = []
         this.heroPicked = false
         this.selectedBuildId = undefined
@@ -183,6 +190,7 @@ export class Tracker extends EventEmitter {
     if (this.dirTimer) clearInterval(this.dirTimer)
     this.powerTail?.stop()
     this.stopTribeRead()
+    this.stopHighlights()
     void stopVision()
   }
 
@@ -307,11 +315,13 @@ export class Tracker extends EventEmitter {
    * Work out where to draw boxes over the tavern, when there's anything worth
    * pointing at.
    *
-   * Recomputed only when the tavern's contents change, not on every snapshot —
-   * publishing runs ~17 times a second and this captures and scans the screen.
-   * Everything about it is best-effort: no build, nothing wanted, a failed
-   * capture or a slot count that doesn't cover the card we care about all end
-   * with no boxes rather than boxes in the wrong place.
+   * While a wanted minion is on offer, the screen is re-read about once a
+   * second rather than once per change. The log can't say where cards *are*:
+   * buying a card or a spell re-centres the tavern without the wanted card's
+   * slot number changing, and log updates land while cards are still sliding.
+   * Polling also retries a capture that found nothing. Any change to what's on
+   * offer clears the boxes at once, so a stale box never sits on the wrong
+   * card while the next read is pending.
    */
   private refreshHighlights(base: Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'>, build: Build | undefined) {
     const wanted = new Set<string>()
@@ -320,39 +330,61 @@ export class Tracker extends EventEmitter {
       for (const id of build.addons ?? []) wanted.add(id.replace(/_G$/, ''))
     }
     const owned = new Set(base.board.map((m) => m.cardId.replace(/_G$/, '')))
-    const targets = base.phase === 'shop' ? base.shop.filter((m) => wanted.has(m.cardId.replace(/_G$/, '')) && !owned.has(m.cardId.replace(/_G$/, ''))) : []
+    const wants = (m: BoardMinion) => wanted.has(m.cardId.replace(/_G$/, '')) && !owned.has(m.cardId.replace(/_G$/, ''))
+    // The debug setting boxes every minion on offer, so the placement can be
+    // checked without waiting for a build's minion to turn up.
+    const debug = this.store.settings.overlay.debugHighlights
+    const targets = base.phase === 'shop' ? base.shop.filter((m) => debug || wants(m)).map((m) => ({ ...m, debug: !wants(m) })) : []
 
-    const key = targets.map((m) => `${m.pos}:${m.cardId}`).join(',')
-    if (key === this.highlightKey) return
-    this.highlightKey = key
-    if (!targets.length) {
+    // The whole tavern, not just the wanted cards: buying anything moves them.
+    const key = `${base.shop.map((m) => `${m.pos}:${m.cardId}`).join(',')}|${targets.map((m) => m.cardId).join(',')}`
+    if (key !== this.highlightKey) {
+      this.highlightKey = key
+      this.highlightTargets = targets
       this.highlights = []
-      return
     }
-    if (this.highlightBusy) return
-    this.highlightBusy = true
-    void (async () => {
-      try {
-        const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
-        if (!geo || !win) return
-        // The capture is resized, so frame coordinates need scaling to the
-        // window's client area before they mean anything on screen.
-        const sx = win.width / geo.frame.width
-        const sy = win.height / geo.frame.height
-        const boxes = targets
-          .map((m) => geo.slots[(m.pos ?? 0) - 1])
-          .filter(Boolean)
-          .map((r) => ({ x: Math.round(r.x * sx), y: Math.round(r.y * sy), width: Math.round(r.width * sx), height: Math.round(r.height * sy) }))
-        // Only publish if the tavern hasn't moved on while we were looking.
-        if (this.highlightKey !== key) return
-        this.highlights = boxes
-        this.publish()
-      } catch (err) {
-        console.warn('could not locate the tavern on screen', err)
-      } finally {
-        this.highlightBusy = false
-      }
-    })()
+    if (targets.length && !this.highlightLoop) {
+      this.highlightLoop = true
+      this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_SETTLE_MS)
+    }
+  }
+
+  /** One pass of the highlight loop: read the tavern, redraw, go again while it's wanted. */
+  private async readHighlights() {
+    this.highlightTimer = undefined
+    const key = this.highlightKey
+    const targets = this.highlightTargets
+    try {
+      if (!targets.length) return
+      const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
+      // A failed read leaves no boxes, and the next pass tries again.
+      if (!geo || !win || key !== this.highlightKey) return
+      // The capture is resized, so frame coordinates need scaling to the
+      // window's client area before they mean anything on screen.
+      const sx = win.width / geo.frame.width
+      const sy = win.height / geo.frame.height
+      const boxes = targets.flatMap((m) => {
+        const r = geo.slots[(m.pos ?? 0) - 1]
+        return r ? [{ x: Math.round(r.x * sx), y: Math.round(r.y * sy), width: Math.round(r.width * sx), height: Math.round(r.height * sy), ...(m.debug && { debug: true }) }] : []
+      })
+      if (JSON.stringify(boxes) === JSON.stringify(this.highlights)) return
+      this.highlights = boxes
+      this.publish()
+    } catch (err) {
+      console.warn('could not locate the tavern on screen', err)
+    } finally {
+      if (this.highlightTargets.length) this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_POLL_MS)
+      else this.highlightLoop = false
+    }
+  }
+
+  private stopHighlights() {
+    if (this.highlightTimer) clearTimeout(this.highlightTimer)
+    this.highlightTimer = undefined
+    this.highlightLoop = false
+    this.highlightTargets = []
+    this.highlights = []
+    this.highlightKey = ''
   }
 
   // ------------------------------------------------------------- snapshots

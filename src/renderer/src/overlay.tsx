@@ -30,7 +30,7 @@ function Highlights({ boxes }: { boxes: BgSnapshot['shopHighlights'] }) {
   return (
     <div className="hl-layer">
       {boxes.map((b, i) => (
-        <div key={`${b.x}-${b.y}-${i}`} className="hl-box" style={{ left: b.x, top: b.y, width: b.width, height: b.height }} />
+        <div key={`${b.x}-${b.y}-${i}`} className={`hl-box ${b.debug ? 'hl-debug' : ''}`} style={{ left: b.x, top: b.y, width: b.width, height: b.height }} />
       ))}
     </div>
   )

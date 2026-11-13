@@ -132,7 +132,7 @@ export interface BgSnapshot {
    * client area. Empty unless a build is selected and one of its minions is on
    * offer right now.
    */
-  shopHighlights: { x: number; y: number; width: number; height: number }[]
+  shopHighlights: { x: number; y: number; width: number; height: number; /** Only boxed because debugHighlights is on. */ debug?: boolean }[]
 }
 
 export interface BgMatch {
@@ -205,6 +205,8 @@ export interface OverlaySettings {
   showOdds: boolean
   showLobby: boolean
   showBuild: boolean
+  /** Box every tavern minion, not just the build's, to check the box placement. */
+  debugHighlights: boolean
   /** When locked the overlays ignore the mouse (click-through). */
   locked: boolean
 }

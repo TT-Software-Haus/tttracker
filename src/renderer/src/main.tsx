@@ -1033,6 +1033,12 @@ function SettingsPage() {
         <Toggle label="Lobby & opponent boards (left)" value={o.showLobby} onChange={(v) => void update({ overlay: { ...o, showLobby: v } })} />
         <Toggle label="Build sidebar (right)" hint="Only appears once you've picked a build for the game." value={o.showBuild} onChange={(v) => void update({ overlay: { ...o, showBuild: v } })} />
         <Toggle
+          label="Debug minion highlight"
+          hint="Draws a purple box over every minion in the tavern, to check the boxes line up. Build minions stay gold."
+          value={o.debugHighlights}
+          onChange={(v) => void update({ overlay: { ...o, debugHighlights: v } })}
+        />
+        <Toggle
           label="Lock overlays"
           hint="Unlock to drag and resize the overlay windows. Locked overlays are click-through; hover a lobby row to see that player’s last board."
           value={o.locked}

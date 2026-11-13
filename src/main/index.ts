@@ -245,6 +245,8 @@ function registerIpc() {
   ipcMain.handle('settings:update', (_e, patch: Partial<Settings>) => {
     store.updateSettings(patch)
     if (patch.simIterations) tracker.setSimIterations(patch.simIterations)
+    // Republish so a change to debugHighlights boxes (or unboxes) the tavern now.
+    tracker.publish()
     updateOverlays()
     broadcast('settings:changed', store.settings)
     return store.settings
