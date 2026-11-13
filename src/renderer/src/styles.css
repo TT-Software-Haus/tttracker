@@ -1332,15 +1332,22 @@ a {
   content: '';
   position: absolute;
   top: 0;
-  left: -40%;
+  left: 0;
   width: 40%;
   height: 2px;
   background: linear-gradient(90deg, transparent, var(--accent-2), transparent);
   animation: sweep 1.8s linear infinite;
 }
+/* Travels from just off the left edge to just past the right: 140% of the card,
+   which is 350% of this element's own 40% width. Translating rather than
+   animating `left` matters here more than anywhere else in the file — this one
+   loops forever, over a running game. */
 @keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
   to {
-    left: 100%;
+    transform: translateX(250%);
   }
 }
 
