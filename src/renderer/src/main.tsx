@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import './styles.css'
 import type { BgMatch, BgSnapshot, Build, BuildTarget, CardInfo, Comp, SetupStatus } from '../../shared/types'
-import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips } from './components'
+import { Board, HeroPortrait, LobbyList, OddsBar, Pill, ResultBadge, SessionStrip, Stat, TribeChips, segments } from './components'
 import { TRIBES, artUrl, currentSession, isTopHalf, ordinal, pct, placeColor, placementStats, sortedTargets, timeAgo, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 
 type Page = 'live' | 'minions' | 'builds' | 'history' | 'stats' | 'settings'
@@ -231,9 +231,9 @@ function RoundsTable({ rounds }: { rounds: BgSnapshot['rounds'] }) {
           <span className="round-opp">{r.opponentHeroName ?? '?'}</span>
           {r.odds ? (
             <div className="mini-odds" title={`Win ${pct(r.odds.win)} · Tie ${pct(r.odds.tie)} · Loss ${pct(r.odds.loss)}`}>
-              <div className="seg seg-win" style={{ width: `${r.odds.win * 100}%` }} />
-              <div className="seg seg-tie" style={{ width: `${r.odds.tie * 100}%` }} />
-              <div className="seg seg-loss" style={{ width: `${r.odds.loss * 100}%` }} />
+              {segments([r.odds.win * 100, r.odds.tie * 100, r.odds.loss * 100]).map((s) => (
+                <div key={s.cls} className={`seg ${s.cls}`} style={s.style} />
+              ))}
             </div>
           ) : (
             <span />

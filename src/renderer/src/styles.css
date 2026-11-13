@@ -615,11 +615,27 @@ a {
 }
 .odds-bar,
 .mini-odds {
-  display: flex;
+  position: relative;
   height: 10px;
   border-radius: 999px;
   overflow: hidden;
   background: var(--bg-2);
+}
+/* Each segment covers the whole bar and is slid/squashed into place by its
+   transform. `.seg` is also the segmented-control class, whose border and
+   padding are meaningless on a 10px bar — and would be scaled by the transform. */
+.odds-bar .seg,
+.mini-odds .seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  display: block;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  transform-origin: left center;
 }
 .seg-win {
   background: var(--win);
@@ -1241,9 +1257,10 @@ a {
 
 /* ------------------------------------------------------------------ animation */
 
-/* Odds bar segments glide to new widths. */
+/* Odds bar segments glide to new odds. Transform, not width: animating width
+   relays out all three segments every frame, where a transform is composited. */
 .odds-bar .seg {
-  transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .odds-num {
   position: relative;
