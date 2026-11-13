@@ -346,14 +346,18 @@ function BuildsPage() {
     save(b)
     setOpen(b.id)
   }
-  const useComp = (c: Comp) => {
+  const useComp = async (c: Comp) => {
+    // Addons live on the comp's own page, so they cost one extra request at
+    // the moment of picking. A failure there still gives a usable build.
+    const addons = await window.api.compAddons(c.url).catch(() => [])
     const b: Build = {
       id: crypto.randomUUID(),
       name: c.name,
       tribe: c.tribe,
-      // The comps list gives core minions but no turn guidance, so the turn is
-      // a starting point you're meant to change.
+      // The comp pages carry no turn guidance — "when to commit" is prose —
+      // so the turn is a starting point you're meant to change.
       targets: [{ byTurn: 8, cardIds: c.cardIds }],
+      addons,
       source: { name: 'HSReplay · JeefHS', url: c.url },
     }
     save(b)
@@ -453,9 +457,11 @@ function ImportBuild({ onImport }: { onImport: (b: Omit<Build, 'id'>) => void })
 const TIER_LABEL: Record<number, string> = { 1: 'S', 2: 'A', 3: 'B', 4: 'C', 5: 'D' }
 
 /** The published comps, as starting points. Not ours — credited and linked. */
-function FindBuild({ onUse }: { onUse: (c: Comp) => void }) {
+function FindBuild({ onUse }: { onUse: (c: Comp) => Promise<void> }) {
   const [comps, setComps] = useState<Comp[]>()
   const [error, setError] = useState<string>()
+  // Using a comp fetches its page for the addon cards, so the row says so.
+  const [busy, setBusy] = useState<number>()
   useEffect(() => {
     window.api
       .comps()
@@ -487,8 +493,19 @@ function FindBuild({ onUse }: { onUse: (c: Comp) => void }) {
           <a className="muted small" href="#" onClick={() => void window.api.openExternal(c.url)}>
             Guide
           </a>
-          <button className="btn btn-sm" onClick={() => onUse(c)}>
-            Use
+          <button
+            className="btn btn-sm"
+            disabled={busy !== undefined}
+            onClick={async () => {
+              setBusy(c.id)
+              try {
+                await onUse(c)
+              } finally {
+                setBusy(undefined)
+              }
+            }}
+          >
+            {busy === c.id ? 'Adding…' : 'Use'}
           </button>
         </div>
       ))}
@@ -587,7 +604,7 @@ function BuildEditor({ build, save, remove }: { build: Build; save: (b: Build) =
           <a href="#" onClick={() => void window.api.openExternal(build.source!.url)}>
             {build.source.name}
           </a>
-          . Core minions only — the turns are yours to set.
+          . {build.addons?.length ? 'Core and addon cards' : 'Core minions only'} — the turns are yours to set.
         </div>
       )}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCompsPage } from '../src/main/comps'
+import { parseCompAddons, parseCompsPage } from '../src/main/comps'
 
 /**
  * HSReplay has no API for this — the comps are read out of a JSON blob the page
@@ -58,5 +58,31 @@ describe('reading the HSReplay comps page', () => {
 
   it('survives the comps list being absent', () => {
     expect(parseCompsPage(page(undefined), lookup)).toEqual([])
+  })
+})
+
+/**
+ * Addon cards live on each comp's own page, not the list — a separate blob
+ * with a different shape, so it gets its own contract.
+ */
+describe('reading a comp page for its addon cards', () => {
+  const page = (comp: unknown) => `<html><script type="application/json" id="react_context">${JSON.stringify(comp)}</script></html>`
+  const ids: Record<number, string> = { 113152: 'BG_A', 122516: 'BG_B', 130662: 'BG_C' }
+  const lookup = (d: number) => ids[d]
+
+  it('reads the addon cards', () => {
+    expect(parseCompAddons(page({ comp_id: 76, comp_addon_cards: [113152, 122516] }), lookup)).toEqual(['BG_A', 'BG_B'])
+  })
+
+  it('treats a comp with no addons as empty, not broken', () => {
+    expect(parseCompAddons(page({ comp_id: 76, comp_core_cards: [1] }), lookup)).toEqual([])
+  })
+
+  it('drops addon cards this card database does not know', () => {
+    expect(parseCompAddons(page({ comp_id: 76, comp_addon_cards: [113152, 999999] }), lookup)).toEqual(['BG_A'])
+  })
+
+  it('throws when the page no longer has the blob', () => {
+    expect(() => parseCompAddons('<html>Just a moment…</html>', lookup)).toThrow(/changed its page layout/)
   })
 })

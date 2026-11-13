@@ -27,6 +27,7 @@ const api = {
   deleteBuild: (id: string): Promise<void> => ipcRenderer.invoke('builds:delete', id),
   selectBuild: (id: string | null): Promise<void> => ipcRenderer.invoke('builds:select', id),
   comps: (): Promise<Comp[]> => ipcRenderer.invoke('comps:list'),
+  compAddons: (url: string): Promise<string[]> => ipcRenderer.invoke('comps:addons', url),
   exportBuild: (id: string): Promise<string> => ipcRenderer.invoke('builds:export', id),
   importBuild: (code: string): Promise<Decoded> => ipcRenderer.invoke('builds:import', code),
 
