@@ -152,6 +152,8 @@ function LivePage({ snap, matches }: { snap?: BgSnapshot; matches: BgMatch[] }) 
         )}
       </header>
 
+      <BuildBar snap={snap} />
+
       <div className="live-grid">
         <section className="panel combat-panel">
           <div className="panel-title">
@@ -217,6 +219,47 @@ function LivePage({ snap, matches }: { snap?: BgSnapshot; matches: BgMatch[] }) 
         </section>
       )}
       <SessionPanel matches={matches} />
+    </div>
+  )
+}
+
+/**
+ * Pick or change the build mid-game. The prompt only fires once, right after
+ * the hero is locked in, so without this a dismissal — or the tracker being
+ * restarted mid-game — leaves no way back to a build for the rest of it.
+ */
+function BuildBar({ snap }: { snap: BgSnapshot }) {
+  const [builds] = useBuilds()
+  const current = snap.selectedBuild
+  const relevant = builds.filter((b) => !b.tribe || snap.tribes.includes(b.tribe))
+  const rest = builds.filter((b) => !relevant.includes(b))
+  if (!builds.length) return null
+  return (
+    <div className="build-bar">
+      <span className="muted small">Going for</span>
+      <select className="input" value={current?.id ?? ''} onChange={(e) => void window.api.selectBuild(e.target.value || null)}>
+        <option value="">No build this game</option>
+        {relevant.length > 0 && (
+          <optgroup label="In this lobby">
+            {relevant.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.tribe ? `${tribeLabel(b.tribe)} · ` : ''}
+                {b.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {rest.length > 0 && (
+          <optgroup label="Other tribes">
+            {rest.map((b) => (
+              <option key={b.id} value={b.id}>
+                {tribeLabel(b.tribe)} · {b.name}
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+      {current && <span className="muted small">shown in the sidebar overlay and over the tavern</span>}
     </div>
   )
 }

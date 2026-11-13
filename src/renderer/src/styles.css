@@ -1795,3 +1795,13 @@ a {
     opacity: 0.55;
   }
 }
+.build-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.build-bar .input {
+  width: auto;
+  min-width: 260px;
+}
