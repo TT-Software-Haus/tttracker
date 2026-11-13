@@ -25,7 +25,7 @@ There is no lint script and no ESLint/Prettier config.
   `join(__dirname, '../preload/index.cjs')` in `src/main/index.ts`. These two must stay
   in sync.
 - The renderer is a two-entry build: `index.html` (main window) and `overlay.html`
-  (both overlay windows).
+  (all four overlay kinds).
 - **No path aliases.** All cross-layer imports are relative (`../../shared/types`).
 
 `tsconfig.json` is one config for all three layers: `strict`, `noUnusedLocals`,
@@ -36,8 +36,12 @@ convention.
 `electron-builder` config is inline in `package.json`: Windows NSIS only, no icon, no
 code signing, no publish or auto-update.
 
-**No runtime `dependencies`** — React, Electron and everything else are devDependencies
-because all three targets are bundled at build time.
+**One runtime dependency, `tesseract.js`** (OCR for the hero-select tribe banner — see
+[architecture.md](architecture.md#screen-reading--srcmainvision)). electron-vite
+externalizes everything in `dependencies`, so it's `require`d from `node_modules` at
+runtime rather than bundled (it runs a worker thread and loads WASM from its own
+package). React, Electron and everything else are devDependencies
+bundled at build time.
 
 ## Tests
 

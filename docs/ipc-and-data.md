@@ -21,6 +21,14 @@ Every `on*` returns an unsubscribe function, which the hooks return straight out
 | `matches()` | `matches:list` | invoke | → `BgMatch[]` |
 | `deleteMatch(id)` | `matches:delete` | invoke | `string` → `void` |
 | `pool()` | `cards:pool` | invoke | → `CardInfo[]` |
+| `builds()` | `builds:list` | invoke | → `Build[]` |
+| `saveBuild(b)` | `builds:save` | invoke | `Build` → `void` (insert or replace by id) |
+| `deleteBuild(id)` | `builds:delete` | invoke | `string` → `void` |
+| `selectBuild(id)` | `builds:select` | invoke | `string \| null` → `void` |
+| `exportBuild(id)` | `builds:export` | invoke | `string` → share code |
+| `importBuild(code)` | `builds:import` | invoke | `string` → `Decoded`: `{ build: Omit<Build, 'id'>, missing }` |
+| `comps()` | `comps:list` | invoke | → `Comp[]` (fetched from HSReplay) |
+| `compAddons(url)` | `comps:addons` | invoke | `string` → card ids |
 | `settings()` | `settings:get` | invoke | → `Settings` |
 | `updateSettings(patch)` | `settings:update` | invoke | `Partial<Settings>` → merged `Settings` |
 | `openExternal(url)` | `app:openExternal` | invoke | `string` → `void` |
@@ -35,6 +43,16 @@ Notes:
 - `app:openExternal` is guarded by `/^https:\/\//`. (`setWindowOpenHandler` on the main
   window is not — see [development.md](development.md#rough-edges).)
 - `matches:delete` broadcasts `data:changed` afterwards so every view reloads.
+- `builds:save` / `builds:delete` do **not** broadcast — only the Builds page and the
+  Live page's selector read the list, and `useBuilds()` updates its own state. The
+  selected build reaches the overlays through the snapshot instead.
+- `builds:select` sets the game's build (`null` = dismiss the prompt with none) and
+  marks the prompt answered. In memory only: a tracker restart mid-game forgets it.
+- `comps:addons` only accepts `https://hsreplay.net/battlegrounds/comps/…` URLs, since
+  the renderer supplies the address.
+- `builds:export` / `builds:import` go through `buildCode.ts` in main because codes
+  address cards by `CardDb.shareIndexOf` / `shareCardAt`. Import throws on a bad
+  checksum rather than returning the wrong minions.
 
 ## Shared types — `src/shared/types.ts`
 
@@ -54,11 +72,20 @@ Pure types, no runtime code. The contract between main, preload and renderer.
   lobby: LobbyPlayer[]
   tribes: string[]
   board: BoardMinion[]      // your warband in shop; the fighting copy in combat
+  shop: BoardMinion[]       // tavern offerings, with pos; [] outside a shop phase
   combat?: CombatRound      // the live round, or the most recent one
   rounds: CombatRound[]
   placement?: number
+  selectedBuild?: Build     // the build followed this game
+  buildPrompt?: Build[]     // builds to offer; set after hero pick, cleared once answered
+  shopHighlights: { x, y, width, height }[]  // Hearthstone client-area coords
 }
 ```
+
+`tribes` is the log's tribe list merged with the ones OCR'd off the hero-select
+screen (see [architecture.md](architecture.md#screen-reading--srcmainvision)).
+`selectedBuild`, `buildPrompt` and `shopHighlights` are filled in by `Tracker`, not
+`BgGame` — they come from user choice and the screen, not the log.
 
 `status` and `phase` are independent axes — the UI combines them (e.g. "fighting" is
 `status === 'in-game' && phase === 'combat' && combat.round === round`).
@@ -71,7 +98,9 @@ Duos reserve fields, `odds?`, `result?` (`WON`/`LOST`/`TIED`), `damage?`.
 `unsupported: string[]`, `partial?` (Duos: a teammate warband was unknown).
 
 **`BoardMinion`** — `cardId`, `name`, `atk`, `health`, `tier`, `golden`, plus optional
-`taunt`/`divineShield`/`reborn`/`venomous`/`windfury`/`stealth`.
+`taunt`/`divineShield`/`reborn`/`venomous`/`windfury`/`stealth`, and `pos` (shop
+minions only: the 1-based tavern slot from `ZONE_POSITION`, kept because spells take
+slots too).
 
 **`LobbyPlayer`** — `playerId`, hero card/name, `health`, `armor`, `tier`, `triples`,
 `place`, `team?`, `isMe`, `isTeammate`, `isNextOpponent`, `dead`,
@@ -80,11 +109,19 @@ Duos reserve fields, `odds?`, `result?` (`WON`/`LOST`/`TIED`), `damage?`.
 **`BgMatch`** — a persisted game: `id`, `startedAt`, `endedAt`, `mode`, hero,
 `placement`, `rounds`, `tribes`, `finalBoard`, `teammateHeroCardId?`, `combats`.
 
+**`Build`** — `id`, `name`, `tribe` (race code; `''` = any lobby, e.g. Menagerie),
+`targets: BuildTarget[]` (`{ byTurn, cardIds }`, ≤7 cards each, earliest first),
+`addons?: string[]` (supporting cards, no turn), `source?: { name, url }` when started
+from a published comp.
+
+**`Comp`** — an HSReplay comp: `id`, `name`, `tribe` (`''` if none), `summary`, `tier`
+(1 = S … 3 = B), `difficulty`, `cardIds` (core minions resolved to known ids), `url`.
+
 **`CardInfo`** — the slimmed HearthstoneJSON record (see
 [log-pipeline.md](log-pipeline.md#card-data--carddbts)).
 
 **`Settings`** — `hearthstonePath`, `simIterations`, and
-`overlay: { enabled, opacity, scale, showOdds, showLobby, locked }`.
+`overlay: { enabled, opacity, scale, showOdds, showLobby, showBuild, locked }`.
 
 **`SetupStatus`** — `hearthstonePath`, `installFound`, `logConfigOk`, `logConfigPath`,
 `activeLogDir?`, `powerLogFound`, `cardDbLoaded`, `cardCount`.
@@ -98,8 +135,10 @@ Everything lives in Electron's `userData` directory
 | --- | --- |
 | `bg-matches.json` | `BgMatch[]`, appended on game end, never pruned |
 | `settings.json` | `Settings` |
-| `windows.json` | `Record<name, Electron.Rectangle>` — `main`, `overlay-odds`, `overlay-lobby` |
+| `builds.json` | `Build[]` |
+| `windows.json` | `Record<name, Electron.Rectangle>` — `main`, `overlay-odds`, `overlay-lobby`, `overlay-build` |
 | `carddata/cards-v2.json` | HearthstoneJSON cache (owned by `CardDb`, not `Store`) |
+| `carddata/eng.traineddata` | tesseract.js language data (~5 MB), downloaded on first OCR |
 
 `JsonFile<T>` is ~25 lines: synchronous read on construction with a silent fallback to
 the default on a missing or corrupt file, a 200 ms debounced `save()`, and an atomic
@@ -111,4 +150,4 @@ forward-compat measure is the one-level deep merge of defaults into `settings`:
 ```
 
 Defaults: `simIterations: 5000`, overlay
-`{ enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, locked: true }`.
+`{ enabled: true, opacity: 0.95, scale: 1, showOdds: true, showLobby: true, showBuild: true, locked: true }`.

@@ -22,6 +22,8 @@ field-level descriptions.
 | `LobbyPlayer` | interface |
 | `BgSnapshot` | interface |
 | `BgMatch` | interface |
+| `BuildTarget`, `Build` | interface |
+| `Comp` | interface |
 | `OverlaySettings`, `Settings` | interface |
 | `SetupStatus` | interface |
 
@@ -82,6 +84,9 @@ returns the byte after the preceding newline. No match → file length. Error �
 | `bgSpellNamed(name)` | `(string): CardInfo \| undefined` | Tavern spells cast mid-combat |
 | `bgMinions()` | `(): CardInfo[]` | All BG minions incl. tokens and rotated cards |
 | `pool()` | `(): CardInfo[]` | Current tavern pool only; also the `cards:pool` IPC payload |
+| `shareList()` | `(): CardInfo[]` | Non-golden BG minions sorted by `dbfId`, memoised (reset by `load`). The index space for build codes — only stable while new cards append |
+| `shareIndexOf(cardId)` | `(string): number \| undefined` | Position in `shareList()` |
+| `shareCardAt(index)` | `(number): string \| undefined` | Card id at that position |
 | `load(cards)` | `(CardInfo[]): void` | Builds `byId`, `byDbf`, `bgByName`, `bgSpells`. Tests call this directly with a fixture |
 | `init(cacheDir)` | `(string): Promise<void>` | Cache-first load, refresh if older than 24 h |
 
@@ -157,7 +162,7 @@ type GameEvent =
 | `get inCombat` | `boolean` | `turn > 0 && turn % 2 === 0 && inGame` |
 | `flushPendingMatch()` | `(): void` | Emit the finished match now (used when Hearthstone exits) |
 | `lobby()` | `(): LobbyPlayer[]` | Sorted by place, then team, then player id |
-| `snapshot()` | `(): Omit<BgSnapshot, 'status' \| 'statusDetail'>` | |
+| `snapshot()` | `(): Omit<BgSnapshot, 'status' \| 'statusDetail' \| 'shopHighlights'>` | `shop` filled only during `'shop'`; `selectedBuild`/`buildPrompt` left for `Tracker` |
 
 ### Private members worth knowing
 
@@ -171,6 +176,7 @@ type GameEvent =
 | `minionEntities` / `toBoardMinion` / `toInput` | Entity → display / simulator minion |
 | `lobbyHeroes()` | HERO entities with both `PLAYER_LEADERBOARD_PLACE` and `PLAYER_ID` |
 | `emitMatch()` | Builds the persisted `BgMatch` |
+| `shopMinions()` | Tavern offerings: `IS_BACON_POOL_MINION` minions in the dummy player's PLAY zone, each with `pos` = `ZONE_POSITION` |
 
 ---
 
@@ -295,6 +301,11 @@ phrasings to ignore), `IRRELEVANT`, `TRIBES`, `NUMBERS`.
 
 ## `src/main/tracker.ts`
 
+| Export | Signature |
+| --- | --- |
+| `buildsToOffer(builds, tribes, state)` | `(Build[], string[], { heroPicked, answered, hasSelection, inGame }): Build[] \| undefined` — pure; `undefined` means don't prompt |
+| `Tracker` | `class` |
+
 ### `class Tracker extends EventEmitter`
 
 | Member | Signature | Notes |
@@ -304,6 +315,7 @@ phrasings to ignore), `IRRELEVANT`, `TRIBES`, `NUMBERS`.
 | `start()` | `(): Promise<void>` | Install path, card DB, log config check/repair, attach + 5 s re-attach timer |
 | `stop()` | `(): void` | Clears the directory timer and the tail (not `emitTimer`/`lingerTimer`) |
 | `setSimIterations(n)` | `(number): void` | |
+| `selectBuild(id)` | `(string \| null): void` | Choose this game's build (`null` = none), mark the prompt answered, publish. In memory; reset on `gameStart` |
 | `publish()` | `(): void` | Builds the `BgSnapshot`, stamps `status`, emits |
 | `snapshot()` | `(): BgSnapshot` | Cached; publishes lazily on first call |
 | `setupStatus()` | `(): Promise<SetupStatus>` | Re-checks the log config |
@@ -315,7 +327,8 @@ phrasings to ignore), `IRRELEVANT`, `TRIBES`, `NUMBERS`.
 | `'snapshot'` | `BgSnapshot` |
 | `'data'` | *(none)* — match history changed |
 
-Constants: `GAME_OVER_LINGER_MS = 30_000`, `STALL_MS = 3 * 60_000`, publish debounce
+Constants: `GAME_OVER_LINGER_MS = 30_000`, `STALL_MS = 3 * 60_000`,
+`TRIBE_READ_ATTEMPTS = 12` × `TRIBE_READ_INTERVAL_MS = 2500`, publish debounce
 60 ms, re-attach interval 5 s.
 
 ---
@@ -331,6 +344,9 @@ Constants: `GAME_OVER_LINGER_MS = 30_000`, `STALL_MS = 3 * 60_000`, publish debo
 | `get settings` | `Settings` | Live reference, defaults merged one level deep |
 | `addMatch(m)` | `(BgMatch): void` | Push + debounced save |
 | `deleteMatch(id)` | `(string): void` | |
+| `get builds` | `Build[]` | Live reference |
+| `saveBuild(b)` | `(Build): void` | Insert or replace by id |
+| `deleteBuild(id)` | `(string): void` | |
 | `updateSettings(patch)` | `(Partial<Settings>): void` | `overlay` merged one level deeper |
 | `getBounds(name)` | `(string): Electron.Rectangle \| undefined` | |
 | `setBounds(name, b)` | `(string, Electron.Rectangle): void` | |
@@ -365,7 +381,11 @@ an unsubscribe function.
 | `useSnapshot()` | `(): BgSnapshot` | |
 | `useSettings()` | `(): [Settings \| undefined, (p: Partial<Settings>) => Promise<void>]` | |
 | `useMatches()` | `(): BgMatch[]` | Reloads on `data:changed` |
+| `useBuilds()` | `(): readonly [Build[], save: (Build) => void, remove: (string) => void]` | Optimistic local state; persists via IPC |
 | `usePool()` | `(): CardInfo[]` | Module-level promise cache, cleared if empty |
+| `sortedTargets(b)` | `(Build): BuildTarget[]` | Earliest `byTurn` first, copied |
+| `buildProgress(build, round, board, shop?)` | `→ { stage, minions, addons, have, turnsLeft, final } \| undefined` | Current stage = first not yet past its turn, else the last; goldens count |
+| `cardTextParts(raw)` / `cardTextPlain(raw)` | `(string \| undefined): TextPart[]` / `string` | Card text with Hearthstone's bold/italic emphasis kept as parts / stripped |
 | `Session` | `{ games: BgMatch[]; avg: number; topRate: number }` | games oldest-first |
 | `currentSession(matches)` | `(BgMatch[]): Session` | Cuts at the first >2 h gap (`SESSION_GAP_MS`) |
 | `placementStats(matches)` | `(BgMatch[]): { games, avg, topRate, firsts }` | |

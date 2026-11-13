@@ -33,19 +33,30 @@ If the boxes are offset, `findShopSlots` in `src/main/vision/shopSlots.ts` has
 changing a subsystem. They currently describe the app as it was before this
 branch and will mislead the next person:
 
-- [ ] `docs/ui.md` — says "Five pages"; there are now six. No mention of the
+- [x] `docs/ui.md` — says "Five pages"; there are now six. No mention of the
       Builds page, the build sidebar overlay (`kind=build`), the highlight
       layer (`kind=slots`), the build prompt, or the "Going for" selector.
-- [ ] `docs/ipc-and-data.md` — missing `builds:list/save/delete/select`,
+- [x] `docs/ipc-and-data.md` — missing `builds:list/save/delete/select`,
       `comps:list`, `comps:addons`, `builds:export`, `builds:import`; the
       `Build`/`Comp` types; `BgSnapshot.shop`, `selectedBuild`, `buildPrompt`,
       `shopHighlights`; `OverlaySettings.showBuild`; and `builds.json` in the
       storage table.
-- [ ] `docs/architecture.md` — no `src/main/vision/` (screen capture + OCR),
+- [x] `docs/architecture.md` — no `src/main/vision/` (screen capture + OCR),
       no `comps.ts`, no `buildCode.ts`. `tesseract.js` is the project's first
       runtime dependency and the README/architecture still imply zero.
-- [ ] `docs/api-reference.md` — `CardDb.shareList/shareIndexOf/shareCardAt`,
+- [x] `docs/api-reference.md` — `CardDb.shareList/shareIndexOf/shareCardAt`,
       `BgGame.shopMinions`, `Tracker.selectBuild`.
+
+Done (uncommitted): also `docs/development.md` and the README's features/layout.
+
+### 2b. Check the OCR language cache in the real app
+
+The only `eng.traineddata` on disk is in `%APPDATA%\hearth-tracker\` — written by
+`tmp-live.cjs`, which passes that dir. The app passes `userData/carddata/` and nothing
+is there, so either the in-app OCR hasn't run since `cachePath` was added (`e92c065`)
+or it isn't caching and re-downloads 5 MB each launch. After the next hero select:
+
+- [ ] `%APPDATA%\hearth-tracker\carddata\eng.traineddata` exists
 
 ### 3. Decide how this lands
 
