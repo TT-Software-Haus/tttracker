@@ -133,3 +133,17 @@ What it took, all found with `--profile` (see development.md):
   "Start of Combat" but no handler shows under "Not modelled".
 - **"(Twice per combat.)" limits are now enforced** on generic triggers. The engine
   already counted them; the compiler parsed the limit away and never passed it on.
+- **Every combat-relevant card is modelled** (2026-11-14): all 2487 minions, every hero
+  power, trinket, quest reward and anomaly; 2 of 48 combat enchantments (numbers filled
+  in at runtime, or Deity) are left. Coverage used to look complete because it only
+  checked the pool; Timewarped cards and text without a combat keyword were never checked.
+- **Where the log can't say what a card needs, model a best guess and say so** (the
+  user's choice): the "Approximated" line under the odds. Examples: a Discovered Pirate,
+  an Undead Creation's parts, Blood Gem upgrades from earlier turns, Deadeye's target.
+- **Start of Combat effects are left out of trinkets** on the live path, because the
+  boards are captured after Start of Combat. What they do during the fight is simulated.
+- **Measured on the 74 fights in local logs:** "Not modelled" 9 fights to 0; the actual
+  result given under 5% went from 10 fights to 8. The 8 left have no unmodelled cards,
+  so they point at something other than card text.
+- Sims cost about 40µs per iteration on a busy board, up from 28µs: 5000 iterations in
+  about 200ms of the 400ms budget, on the worker thread.
