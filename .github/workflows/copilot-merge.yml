@@ -58,25 +58,36 @@ jobs:
                         --jq ".[] | select(.commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
             if [ "$reviews" -eq 0 ]; then echo "#$pr: Copilot hasn't reviewed $SHA yet"; continue; fi
 
-            # Every Copilot comment on this commit, across all its reviews, so a
-            # later review that doesn't repeat an earlier finding can't clear it.
-            comments=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/comments" \
-                         --jq ".[] | select(.original_commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
+            # Unresolved Copilot threads on any commit of the PR. Copilot re-reviews
+            # only what a push changed, so its earlier findings aren't repeated on
+            # the new head; they stay open until someone resolves the thread.
+            open=$(gh api graphql --paginate -F owner="${GH_REPO%/*}" -F name="${GH_REPO#*/}" -F pr="$pr" -f query='
+                query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
+                  repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
+                    reviewThreads(first: 100, after: $endCursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes { isResolved comments(first: 1) { nodes { author { login } } } }
+                    } } } }' \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+                      | select((.isResolved | not) and .comments.nodes[0].author.login == "copilot-pull-request-reviewer")
+                      | 1' | wc -l)
             state=$(gh api "repos/$GH_REPO/commits/$SHA/status" \
                       --jq '[.statuses[] | select(.context == "copilot-review")][0].state // ""')
 
-            if [ "$comments" -gt 0 ]; then
-              echo "#$pr: Copilot left $comments comment(s)"
-              status failure "Copilot left $comments comment(s)"
+            if [ "$open" -gt 0 ]; then
+              echo "#$pr: $open unresolved Copilot comment(s)"
+              status failure "$open unresolved Copilot comment(s)"
               continue
             fi
 
             if ! contributor "$author"; then
-              # Each human's latest verdict on this commit; the bot's own approval never counts.
+              # Each human's latest verdict across the whole PR, counted only if it
+              # approves this commit: a later rejection of any commit overrides it.
+              # The bot's own approval never counts.
               approvers=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" --jq '.[]
-                  | select(.commit_id == env.SHA and .user.login != "github-actions[bot]" and .state != "COMMENTED")
-                  | .user.login + " " + .state' \
-                | awk '{ last[$1] = $2 } END { for (u in last) if (last[u] == "APPROVED") print u }')
+                  | select(.user.login != "github-actions[bot]" and .state != "COMMENTED" and .state != "PENDING")
+                  | .user.login + " " + .state + " " + .commit_id' \
+                | awk -v sha="$SHA" '{ last[$1] = $2 " " $3 } END { for (u in last) if (last[u] == "APPROVED " sha) print u }')
               approved=
               for u in $approvers; do contributor "$u" && approved=$u && break; done
               if [ -z "$approved" ]; then

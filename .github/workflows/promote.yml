@@ -78,7 +78,8 @@ jobs:
             fi
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            npm version "$version" --no-git-tag-version
+            # No lifecycle scripts: they'd be develop's code running with the deploy key.
+            npm version "$version" --no-git-tag-version --ignore-scripts
             git commit -am "chore: bump version to $version"
             git push origin develop
             exit 0 # the push re-runs this on `synchronize`, which approves and merges
