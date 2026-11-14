@@ -329,8 +329,6 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
-  // Logged so regressions show up in the dev log: a block here is a frozen mouse.
-  watchStalls((ms) => console.warn(`[stall] main thread blocked for ${ms}ms (the user's mouse froze with it)`))
   store = new Store(app.getPath('userData'))
   tracker = new Tracker(store, join(app.getPath('userData'), 'carddata'))
   tracker.on('snapshot', (snap: BgSnapshot) => {
@@ -346,6 +344,10 @@ app.whenReady().then(async () => {
   createOverlay('build')
   createHighlightWindow()
   followGameWindow()
+  // Logged so regressions show up in the dev log: a block here is a frozen
+  // mouse. Started after the windows exist: creating them blocks for ~300ms,
+  // but before any overlay is click-through there's no mouse hook to hold up.
+  watchStalls((ms) => console.warn(`[stall] main thread blocked for ${ms}ms (the user's mouse froze with it)`))
   await tracker.start()
   broadcast('data:changed')
   updateOverlays()

@@ -52,6 +52,9 @@ export function canPickBuild(
  * snapshots. Emits 'snapshot' (BgSnapshot) and 'data' (match history changed).
  */
 const GAME_OVER_LINGER_MS = 30_000
+/** The longest a slice of log lines may hold the main thread (see feed()). */
+const SLICE_MS = 8
+const SLICE_LINES = 200
 /** Hero select lasts ~70s; retry the banner read across it, then give up. */
 const TRIBE_READ_ATTEMPTS = 70
 const TRIBE_READ_INTERVAL_MS = 1000
@@ -75,6 +78,8 @@ export class Tracker extends EventEmitter {
   private overSince?: number
   private lingerTimer?: NodeJS.Timeout
   private powerTail?: LogTail
+  /** Lines waiting for drain(), oldest first. */
+  private lineQueue: { lines: string[]; catchingUp: boolean; at: number }[] = []
   private logDir?: string
   /**
    * We were watching this log folder before Power.log existed, so its first
@@ -293,6 +298,7 @@ export class Tracker extends EventEmitter {
       // New Hearthstone session: everything from the old log is stale.
       this.powerTail?.stop()
       this.powerTail = undefined
+      this.lineQueue = [] // the old log's; never feed them to the new model
       this.logDir = dir
       this.powerLogIsNew = false
       this.freshModel()
@@ -323,7 +329,7 @@ export class Tracker extends EventEmitter {
     this.lastLineAt = statSync(powerPath).mtimeMs
     this.powerTail = new LogTail(powerPath, (lines) => {
       if (!first) this.lastLineAt = Date.now()
-      this.ingest(lines, first)
+      this.feed(lines, first)
       first = false
     })
     this.powerTail.start(offset)
@@ -331,6 +337,30 @@ export class Tracker extends EventEmitter {
   }
 
   /** Feed log lines to both models. `catchingUp` marks the replay of a game already under way. */
+  /**
+   * Hand lines to ingest() a slice at a time, yielding to the event loop
+   * between slices. The replay of a game in progress is ~170k lines, ~0.7s in
+   * one go, and the main thread carries a system-wide mouse hook (CLAUDE.md):
+   * the user's cursor froze for all of it. Lines that arrive meanwhile queue
+   * behind, so order is kept, and nothing is published until the queue is empty,
+   * so a half-replayed game never reaches the overlays.
+   */
+  private feed(lines: string[], catchingUp: boolean) {
+    this.lineQueue.push({ lines, catchingUp, at: 0 })
+    if (this.lineQueue.length === 1) this.drain()
+  }
+
+  private drain() {
+    const end = performance.now() + SLICE_MS
+    while (this.lineQueue.length && performance.now() < end) {
+      const job = this.lineQueue[0]
+      this.ingest(job.lines.slice(job.at, job.at + SLICE_LINES), job.catchingUp)
+      job.at += SLICE_LINES
+      if (job.at >= job.lines.length) this.lineQueue.shift()
+    }
+    if (this.lineQueue.length) setImmediate(() => this.drain())
+  }
+
   private ingest(lines: string[], catchingUp: boolean) {
     this.catchingUp = catchingUp
     let changed = false
@@ -518,6 +548,8 @@ export class Tracker extends EventEmitter {
   }
 
   publish() {
+    // Mid-replay: wait for the rest, so a half-replayed game never shows.
+    if (this.lineQueue.length && this.lastSnapshot) return this.schedulePublish()
     const base = this.bg.snapshot()
     let status: BgSnapshot['status']
     let statusDetail: string | undefined
