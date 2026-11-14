@@ -34,15 +34,15 @@ describe('unrecognised combat text is reported', () => {
 
 describe('hero powers', () => {
   it('reports Start of Combat ones without a handler', () => {
-    const power = card('<b>Start of Combat:</b> Deal 1 damage to all minions.', { type: 'HERO_POWER', name: 'Not A Real Power' })
-    expect(compileHeroPower(power).unsupported).toHaveLength(1)
+    const power = card('<b>Start of Combat:</b> Teleport every minion to the moon.', { type: 'HERO_POWER', name: 'Not A Real Power' })
+    expect(compileHeroPower(power, none).unsupported).toHaveLength(1)
   })
 
   it('ignores the rest: they act in the shop', () => {
-    expect(compileHeroPower(card('Refresh the Tavern.', { type: 'HERO_POWER', name: 'Shop Thing' })).unsupported).toEqual([])
+    expect(compileHeroPower(card('Refresh the Tavern.', { type: 'HERO_POWER', name: 'Shop Thing' }), none).unsupported).toEqual([])
   })
 
   it('knows Wingmen', () => {
-    expect(compileHeroPower(card('Start of Combat: ...', { type: 'HERO_POWER', name: 'Wingmen' })).startOfCombat).toBeTypeOf('function')
+    expect(compileHeroPower(card('Start of Combat: ...', { type: 'HERO_POWER', name: 'Wingmen' }), none).startOfCombat).toBeTypeOf('function')
   })
 })

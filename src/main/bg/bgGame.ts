@@ -517,7 +517,7 @@ export class BgGame {
     // Hands: yours is always visible; for others Hearthstone copies the cards a
     // fight needs (e.g. for Diremuck Forager / Flighty Scout) into the log.
     const heroPower = this.cards.byDbfId(Number(hero?.tags.HERO_POWER ?? 0))?.id
-    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower }
+    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower, turn: this.round }
     if (controller === this.game.friendlyPlayerId) {
       const mate = Number(this.game.playerEntity(controller)?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0)
       const mateBoard = mate ? this.lastTeammateBoard.get(mate) : undefined

@@ -150,15 +150,27 @@ doubled, so parsing the actual card's text is correct without any special casing
 
 ## Hero powers
 
-`BoardInput.heroPower` and `reserve.heroPower` carry the hero power's card id.
-`compileHeroPower` looks it up by **name** in `HERO_POWERS` (so skins share a handler)
-and returns a `startOfCombat(c, side)` effect. It runs before the side's minions' Start
-of Combat: in `startOfCombat()` when that isn't skipped, and in `bringInReserves()`
-every time, because a Duos reserve is captured before the fight and its hero power
-fires as it enters. Then attack-immediately minions swing. A hero power with "Start of
-Combat" text and no handler is listed under `unsupported`.
+`BoardInput.heroPower` and `reserve.heroPower` carry the hero power's card id
+(`BoardInput.turn` too, for "Unlocks on Turn 7"). `compileHeroPower(card, cards)`:
 
-Modelled: Wingmen (Illidan).
+- **Start of Combat text** is parsed with the minion action templates. A hero power has
+  no minion behind it, so its effects act through a stand-in minion that never joins the
+  board. The effect runs before the side's minions' Start of Combat: in
+  `startOfCombat()` when that isn't skipped, and in `bringInReserves()` every time,
+  because a Duos reserve is captured before the fight and its hero power fires as it
+  enters. Then attack-immediately minions swing.
+- **All-combat effects** (`passive`, a `CardFx`): Sprout It Out!, Broodmother, Frostwolf
+  Fervor / Stormpike Strength. They go on `side.hero`, a stand-in the engine includes in
+  summon, Avenge and `whenSpace` processing. They act even when Start of Combat is
+  skipped.
+- **`HERO_POWERS`** (by **name**, so skins share a handler) for the rest: Wingmen, and
+  the choice-based ones.
+- **Approximated:** Deadeye's target, Glorious Gloop's and Rapid Reanimation's chosen
+  minion (random), Wax Warband and Broodmother's improvements (printed numbers).
+- **Not modelled:** Murloc King. What it gives lands on minions as enchantments, which
+  the sim isn't told about (see below).
+
+`npx tsx scripts/sim-coverage.ts cards.json --hero-powers` lists what's left.
 
 ## Known limitations
 
@@ -176,7 +188,10 @@ Modelled: Wingmen (Illidan).
   the fight (and probably reports a tie).
 - Per-combat trigger limits ("Twice per combat") are enforced on generic triggers;
   manual handlers count their own.
-- Hero powers: only those in `HERO_POWERS` (`effects.ts`) are modelled; see below.
+- **Enchantments aren't passed to the sim**, only card id, stats and keywords. Anything
+  given to a minion as an enchantment before the boards are captured is lost: a
+  Deathrattle given at Start of Combat (Murloc King, Earth Invocation, Fragrant
+  Phylactery on the first warband), Leapfrogger's, Whirl-O-Tron's copies.
 
 ## Checking coverage after a patch
 

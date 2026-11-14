@@ -18,7 +18,7 @@ if (process.argv.includes('--hero-powers')) {
   const names = new Set<string>()
   for (const p of powers) {
     if (names.has(p.name)) continue // skins share a handler
-    const fx = compileHeroPower(p)
+    const fx = compileHeroPower(p, db)
     if (!fx.unsupported.length) continue
     names.add(p.name)
     console.log(`${p.id.padEnd(28)} ${p.name}: ${fx.unsupported.join(' | ')}`)

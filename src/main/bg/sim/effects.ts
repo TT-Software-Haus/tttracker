@@ -65,6 +65,8 @@ export interface CardFx {
   onShieldLost?: Effect[]
   /** "After another friendly Demon deals damage, ..." */
   onFriendlyDamage?: FriendlyAttackTrigger[]
+  /** "When you have space in combat, ...": runs once, the first time the board has room. */
+  whenSpace?: Effect[]
   /** "Whenever this kills a minion" (ev.target = the victim, ev.attacking). */
   onKill?: Effect[]
   /** "Whenever this takes damage" */
@@ -121,7 +123,7 @@ export function cleanText(text: string | undefined): string {
     .replace(/[\n\r]+/g, ' ')
     .replace(/\$(\d+)/g, '$1')
     .replace(/\s+/g, ' ')
-    .replace(/\b(left|right)- most\b/gi, '$1-most') // "left-\n    most" in the raw text
+    .replace(/\b(left|right|highest|lowest)- (most|health|attack)\b/gi, '$1-$2') // "left-\n    most" in the raw text
     .trim()
 }
 
@@ -155,6 +157,22 @@ function parseSelector(phrase: string): Selector | undefined {
   if ((m = /^the (left-most|two left-most) minions? in your hand$/.exec(p))) {
     const n = m[1] === 'left-most' ? 1 : 2
     return (_c, _self, side) => side.hand.slice(0, n)
+  }
+  if (p === 'all minions') return (c) => c.sides.flatMap((sd) => c.alive(sd))
+  if ((m = /^your (left|right)-most minion$/.exec(p))) {
+    const left = m[1] === 'left'
+    return (c, _self, side) => {
+      const a = c.alive(side)
+      const t = left ? a[0] : a[a.length - 1]
+      return t ? [t] : []
+    }
+  }
+  if ((m = /^your (lowest|highest)-attack minion$/.exec(p))) {
+    const low = m[1] === 'lowest'
+    return (c, _self, side) => {
+      const a = [...c.alive(side)].sort((x, y) => (low ? x.atk - y.atk : y.atk - x.atk))
+      return a.length ? [c.pick(a.filter((x) => x.atk === a[0].atk))!] : []
+    }
   }
   if (p === 'a random minion in your hand') return (c, _self, side) => [c.pick(side.hand)].filter((x): x is Minion => !!x)
   if (p === 'the undead to the right') {
@@ -201,6 +219,20 @@ function parseSelector(phrase: string): Selector | undefined {
     return (c, self, side) => c.pickN(friendlies(c, side).filter((x) => x !== self && (!tribe || hasTribe(x, tribe))), n)
   }
   return undefined
+}
+
+/** Single enemy targets: "the left-most enemy minion", "the highest-Health enemy minion". */
+function enemyTarget(who: string): ((c: Combat, enemies: Minion[]) => Minion | undefined) | undefined {
+  const m = /^the (left-most|right-most|highest-health|lowest-health) enemy minion$/.exec(who)
+  if (!m) return undefined
+  const how = m[1]
+  return (c, enemies) => {
+    if (!enemies.length) return undefined
+    if (how === 'left-most') return enemies[0]
+    if (how === 'right-most') return enemies[enemies.length - 1]
+    const sorted = [...enemies].sort((a, b) => (how === 'highest-health' ? b.hp - a.hp : a.hp - b.hp))
+    return c.pick(sorted.filter((x) => x.hp === sorted[0].hp))
+  }
 }
 
 /** One minion per minion type, each a different minion ("a friendly minion of each type"). */
@@ -555,6 +587,12 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
     const r = /^(a|an|one|two|three|four|five|six|seven|\d+) random enemy minions?$/.exec(who)
     if (r) return (c, me, side) => c.pickN(c.alive(c.other(side)), num(r[1])).forEach((t) => c.damage(t, n, me))
     if (who === 'the target') return (c, me, _side, ev) => ev.target && c.damage(ev.target, n, me)
+    const pickEnemy = enemyTarget(who)
+    if (pickEnemy)
+      return (c, me, side) => {
+        const t = pickEnemy(c, c.alive(c.other(side)))
+        if (t) c.damage(t, n, me)
+      }
     return undefined
   }
 
@@ -599,6 +637,40 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
         side.nameBonus.set(name, { atk: b.atk + atk, hp: b.hp + hp })
         for (const t of c.alive(side)) if (t.name === name) c.buff(t, atk, hp)
       }
+    }
+  }
+
+  // Double <who>'s Attack ("Double your left-most minion's Attack")
+  if ((m = /^double (.+?)'s? attack$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) c.buff(t, t.atk, 0)
+      }
+  }
+  // Give <who> "Deathrattle: ..." — a Deathrattle written out in quotes.
+  if ((m = /^give (.+?) "deathrattle: (.+?)\.?"$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    const problems: string[] = []
+    const dr = parseBody(m[2] + '.', cards, self, problems)
+    if (sel && !problems.length)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) (t.grantedDeathrattles ??= []).push(dr)
+      }
+  }
+  // Give <who> this minion's stats
+  if ((m = /^give (.+?) this minion's stats$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) c.buff(t, me.atk, me.maxHp)
+      }
+  }
+  // Summon and get a minion of your Tier
+  if (/^summon and get a minion of your tier$/i.test(s)) {
+    return (c, me, side, ev) => {
+      const card = c.pick(c.cards.pool().filter((x) => !x.normalId && x.type === 'MINION' && x.techLevel === side.heroTier))
+      if (card) c.summon(side, c.makeMinion({ card }), ev.pos ?? side.minions.indexOf(me) + 1)
     }
   }
 
@@ -1335,8 +1407,17 @@ export type HeroPowerEffect = (c: Combat, side: Side) => void
 
 export interface HeroPowerFx {
   startOfCombat?: HeroPowerEffect
+  /**
+   * Effects that last all combat ("minions you summon during combat", "Avenge"), as a
+   * minion's would. The engine gives them to a stand-in for the hero that never fights.
+   */
+  passive?: CardFx
+  /** "(Unlocks on Turn 7.)": inactive before that turn. */
+  unlockTurn?: number
   /** Combat text we don't model yet (empty = fully modelled, or no combat effect). */
   unsupported: string[]
+  /** Modelled on a best guess (e.g. a choice the player made that the log doesn't carry). */
+  approximated?: string[]
 }
 
 /**
@@ -1348,6 +1429,70 @@ export interface HeroPowerFx {
  * is copied before the fight, and the hero power fires as it comes in.
  */
 const HERO_POWERS: Record<string, (fx: HeroPowerFx) => void> = {
+  // "Give +1/+2 and Taunt to minions you summon during combat."
+  'Sprout It Out!': (fx) => {
+    fx.passive = {
+      unsupported: [],
+      onSummon: [
+        (c, _hero, _side, ev) => {
+          if (!ev.other) return
+          c.buff(ev.other, 1, 2)
+          ev.other.taunt = true
+        },
+      ],
+    }
+  },
+  // "Avenge (4): Summon a 1/1 Whelp that attacks immediately. Improve this by +1/+1." How far it has
+  // improved isn't in the log: the printed 1/1.
+  Broodmother: (fx) => {
+    fx.passive = {
+      unsupported: [],
+      approximated: ['uses its printed numbers'],
+      avenge: {
+        n: 4,
+        effects: [
+          (c, _hero, side) => {
+            const whelp = c.summon(side, c.makeMinion({ name: 'Whelp', atk: 1, hp: 1, tribes: ['DRAGON'] }), side.minions.length)
+            if (whelp && c.alive(c.other(side)).length) c.singleAttack(side, whelp)
+          },
+        ],
+      },
+    }
+  },
+  // "When you have space in combat, summon a copy of your highest-Attack / highest-Health minion. (Unlocks on Turn 7.)"
+  'Frostwolf Fervor': (fx) => copyWhenSpace(fx, 'atk'),
+  'Stormpike Strength': (fx) => copyWhenSpace(fx, 'hp'),
+  // Sylvanas – "Take aim! Start of Combat: Deal 99 damage to your target." The target isn't known: a random enemy.
+  Deadeye: (fx) => {
+    fx.startOfCombat = (c, side) => {
+      const t = c.pick(c.alive(c.other(side)))
+      if (t) c.damage(t, 99)
+    }
+    fx.approximated = [CHOSEN.Deadeye]
+  },
+  // Duos – "Choose a friendly minion. Start of Combat: Transform it into your teammate's highest-Tier minion."
+  'Glorious Gloop': (fx) => {
+    fx.startOfCombat = (c, side) => {
+      const best = [...side.teammate].sort((a, b) => (b.tier ?? 0) - (a.tier ?? 0))[0]
+      const alive = c.alive(side)
+      const chosen = c.pick(alive)
+      if (!best || !chosen) return
+      side.minions[side.minions.indexOf(chosen)] = c.minionFrom(best)
+    }
+    fx.approximated = [CHOSEN['Glorious Gloop']]
+  },
+  // "Choose a friendly minion. Start of Combat: Destroy it. When you have space, resummon an exact copy."
+  'Rapid Reanimation': (fx) => {
+    fx.startOfCombat = (c, side) => {
+      const chosen = c.pick(c.alive(side))
+      if (!chosen) return
+      const copy = c.minionCopy(chosen)
+      chosen.destroyed = true
+      c.resolveDeaths(side)
+      c.summon(side, copy, side.minions.length)
+    }
+    fx.approximated = [CHOSEN['Rapid Reanimation']]
+  },
   // Illidan Stormrage – Start of Combat: your left- and right-most minions gain +2/+1 and attack immediately.
   Wingmen: (fx) => {
     fx.startOfCombat = (c, side) => {
@@ -1361,11 +1506,58 @@ const HERO_POWERS: Record<string, (fx: HeroPowerFx) => void> = {
   },
 }
 
-export function compileHeroPower(card: CardInfo | undefined): HeroPowerFx {
+/** Hero powers whose effect depends on a choice the player made, which the sim doesn't get. */
+const CHOSEN: Record<string, string> = {
+  Deadeye: 'the target is random',
+  'Glorious Gloop': 'the chosen minion is random',
+  'Rapid Reanimation': 'the chosen minion is random',
+  'Wax Warband': 'uses its printed numbers', // improves through the game
+}
+
+function copyWhenSpace(fx: HeroPowerFx, stat: 'atk' | 'hp') {
+  fx.unlockTurn = 7
+  fx.passive = {
+    unsupported: [],
+    whenSpace: [
+      (c, _hero, side) => {
+        const best = [...c.alive(side)].sort((a, b) => b[stat] - a[stat])[0]
+        if (best) c.summon(side, c.minionCopy(best), side.minions.indexOf(best) + 1)
+      },
+    ],
+  }
+}
+
+export function compileHeroPower(card: CardInfo | undefined, cards: CardSource): HeroPowerFx {
   const fx: HeroPowerFx = { unsupported: [] }
   if (!card) return fx
   const manual = HERO_POWERS[card.name]
-  if (manual) manual(fx)
-  else if (/Start of Combat/i.test(card.text ?? '')) fx.unsupported.push(cleanText(card.text))
+  if (manual) {
+    manual(fx)
+    return fx
+  }
+  const text = cleanText(card.text)
+  // Murloc King: what it gives lands on minions as enchantments, which the sim isn't told about yet.
+  if (/^At the start of next combat/i.test(text)) {
+    fx.unsupported.push(text)
+    return fx
+  }
+  const at = text.search(/Start of Combat:/i)
+  if (at < 0) return fx
+  // "Choose an Element. Start of Combat: Call upon that Element." does nothing until chosen,
+  // and choosing swaps in one of the Invocations, which have their own text.
+  if (/^Choose an Element/i.test(text)) return fx
+  const body = text.slice(at + 'Start of Combat:'.length).replace(/\([^)]*\)/g, '').trim()
+  const problems: string[] = []
+  const effects = parseBody(body, cards, card, problems)
+  if (problems.length) {
+    fx.unsupported.push(...problems)
+    return fx
+  }
+  // A hero power has no minion behind it: effects act through a stand-in that never joins the board.
+  fx.startOfCombat = (c, side) => {
+    const me = c.makeMinion({ name: card.name, atk: 0, hp: 1 })
+    for (const e of effects) e(c, me, side, {})
+  }
+  if (CHOSEN[card.name]) fx.approximated = [CHOSEN[card.name]]
   return fx
 }
