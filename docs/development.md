@@ -4,12 +4,20 @@
 
 ```sh
 npm install
-npm run dev        # electron-vite dev, hot reloading
+npm run native     # cargo build of native/capture → native/capture.node
+npm run dev        # native, then electron-vite dev, hot reloading
 npm test           # vitest: simulator + real-log replay
 npm run typecheck  # tsc --noEmit
-npm run build      # all three targets into out/
+npm run build      # native, then all three targets into out/
 npm run dist       # + electron-builder --win → NSIS installer in dist/
 ```
+
+**Rust is needed to build** (stable, MSVC toolchain): the screen capture is a Rust
+module, `native/capture` (crates `napi` and `windows`). It's built with plain cargo into
+`native/capture.node`, which is gitignored and shipped unpacked from the asar. Node-API is
+ABI-stable, so it needs no rebuild when Electron updates. Windows locks a loaded DLL, so
+**close the app before rebuilding it**: `npm run native` fails to copy (EBUSY) while the
+app is running, and `--watch` doesn't rebuild Rust.
 
 First run: open **Setup**, click **Enable logging**, restart Hearthstone.
 

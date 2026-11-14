@@ -51,7 +51,8 @@ line and let the user decide — don't launch them and report back.
 - Match the surrounding style: no new dependencies, no abstractions with one caller.
   Runtime dependencies are kept to the two that have no workable alternative —
   `tesseract.js` (OCR) and `koffi` (native user32 calls) — and each was agreed
-  explicitly. Ask before adding another.
+  explicitly. Ask before adding another. The Rust capture module in `native/capture`
+  is held to the same rule: its crates are `napi` and `windows`, agreed explicitly.
 - Treat odd-looking existing code as intentional until you've found out why — the log
   parsing and Duos handling in particular encode hard-won quirks of Hearthstone's
   actual log output.

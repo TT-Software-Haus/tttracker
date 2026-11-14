@@ -3,7 +3,9 @@ import { join } from 'node:path'
 
 /** What the Rust module in native/capture exports. */
 export interface NativeCapture {
-  ping(): string
+  /** See native/capture/src/lib.rs. */
+  frame(height: number, fraction: number): { width: number; height: number; bgra: Buffer } | null
+  close(): void
 }
 
 /**

@@ -24,8 +24,6 @@ Six windows:
 - **Highlight layer** — `overlay.html?kind=slots`. Not positionable: main sets its
   bounds to Hearthstone's client area every time there are boxes to draw, and it's
   permanently click-through and unfocusable.
-- **Capture window** — `overlay.html?kind=capture`, never shown, `backgroundThrottling:
-  false`. Streams the Hearthstone window for the screen reading below; draws nothing.
 
 The three positionable overlays are frameless, transparent, `skipTaskbar`, created eagerly at startup
 with `show: false`, and raised with `setAlwaysOnTop(true, 'screen-saver')` so they sit
@@ -68,8 +66,9 @@ src/
       sim/effects.ts  card text → effects compiler + manual handlers
     cards/cardDb.ts   HearthstoneJSON download, slim, cache, indexes
     vision/
-      heroSelect.ts   lobby tribes (tesseract.js) and tavern slots, from stream frames
-      stream.ts       frames of the Hearthstone window via the hidden capture window
+      heroSelect.ts   lobby tribes (tesseract.js) and tavern slots, from captured frames
+      stream.ts       frames of the Hearthstone window via the Rust module
+      native.ts       loads native/capture.node (built from native/capture, Rust)
       bannerRect.ts   find the "Choose a Hero" plate by colour (pure)
       tribeNames.ts   OCR text → race codes, fuzzy-matched (pure)
       shopSlots.ts    find tavern cards by their tier shields (pure)
@@ -136,21 +135,24 @@ The log can't answer two questions the Builds feature needs, so these are read o
 screen. Each is split into a pure pixel/text half (tested against captured frames) and
 a thin Electron half in `heroSelect.ts`.
 
-Frames come from a stream of the Hearthstone window alone (`stream.ts`, with the
-renderer half in `src/renderer/src/capture.ts`). The hidden capture window calls
-`getDisplayMedia`; main's `setDisplayMediaRequestHandler` answers with the window titled
-`Hearthstone`, found in a window list taken *without* thumbnails. `captureFrame(height)`
-opens the stream on first use (5fps; ~0.9s to the first frame), reads the latest frame
-from a `<video>` element (6–11ms), and returns it as BGRA, the layout the detectors were
-written against. Callers `stopCapture()` when they're done: the tribe read after hero
-select, the highlight loop when nothing is left to box. Reads check the window exists
-first (a microsecond, via `gameWindow.ts`), time out after 5s, and return nothing on any
-failure, including frames that come back black (logged once).
+Frames come from a Rust module (`native/capture`, loaded by `native.ts`, wrapped by
+`stream.ts`). It keeps one Windows Graphics Capture session on the window titled
+`Hearthstone`, opened on the first read (~0.25s) and kept until `stopCapture()`.
+`captureFrame(height, fraction)` returns the frame at `height` as BGRA, the layout the
+detectors were written against, with only the top `fraction` of its rows filled in (the
+rest are zero): the top half for the tavern, the top 40% for the tribe banner. Only that
+strip leaves the GPU. It's shrunk there with mipmaps to the nearest level above the
+requested height, and box-filtered to the exact size on the CPU. A read takes ~2.5ms.
+Callers `stopCapture()` when they're done: the tribe read after hero select, and the
+highlight loop when nothing is left to box. Reads return nothing on any failure,
+including frames that come back black (logged once), and there's no fallback if the
+module can't load.
 
-This replaced `desktopCapturer.getSources()` thumbnails, which render *every* open
-window to return one: with 24 windows open, ~1.3s and 57MB per call at 720p, 227MB at
-2560×1440. The tavern loop paid that every couple of seconds; memory sawtoothed to
-1.1GB.
+History: `desktopCapturer.getSources()` thumbnails rendered *every* open window to
+return one (~1.3s and 57MB per call at 720p), and memory sawtoothed to 1.1GB. Their
+replacement, a hidden window streaming the game through `getDisplayMedia`, copied a
+whole video frame from the GPU per read. With the boxes on and a read every second, the
+user's mouse froze at random moments.
 
 **Lobby tribes, before the first shop.** Hearthstone writes no `IS_BACON_POOL_MINION`
 markers before the hero is locked in, and some tribes don't show up in the log until
@@ -184,16 +186,17 @@ the log's count of tavern cards, spells included (tavern spells are
 `ZONE_POSITION`). A missed end shield, or a read taken while cards are still sliding
 after a purchase, shows up as a mismatch, and that read draws nothing.
 While a wanted minion (or, with *Debug minion highlight*, any minion) is on offer,
-`Tracker.readHighlights` re-reads the tavern about once a second, half a second after
-the loop starts. The log can't say where cards *are*, only which slot they're in, so
+`Tracker.readHighlights` reads the tavern half a second after the tavern changes, then
+once a second until two reads in a row put the boxes in the same place (the cards have
+stopped sliding). It then stops until the tavern changes again. The log can't say where cards *are*, only which slot they're in, so
 the screen is the authority on position. Any change to what's on offer clears the boxes
 at once. A captured frame is the visible window, title bar included (DWM's extended
 frame bounds), while the boxes are drawn over the client area, so `gameWindow.ts`
 returns both: boxes are scaled by the captured size and shifted by the client area's
 offset inside it. In fullscreen the two are the same; windowed at 150% the frame was
 1924×1127 around a 1920×1080 client area, offset (2, 45). A result is dropped if the
-tavern moved on while it was being read. The loop stops, and
-closes the stream, when nothing is left to box. Any failure means no boxes, never
+tavern moved on while it was being read. When nothing is left to box, the loop stops
+and closes the capture session. Any failure means no boxes, never
 misplaced ones.
 
 ## Builds flow

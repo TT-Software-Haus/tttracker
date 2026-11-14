@@ -573,7 +573,7 @@ game. It saves the frame and checks it against a screenshot, and times reads
 (target: a few ms). Memory stays flat over a few hundred reads. Fullscreen and
 windowed both work.
 
-### M18 — Switch to the native module; delete the stream
+### M18 — Switch to the native module; delete the stream ✅ done
 
 `stream.ts` calls Rust. The capture window, `capture.ts`, `initCapture` and the
 display-media handler go. Docs updated (architecture, development:

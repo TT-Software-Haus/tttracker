@@ -59,7 +59,8 @@ export async function stopVision() {
  */
 export async function readLobbyTribes(cacheDir: string): Promise<string[]> {
   // 1440 high: tesseract needs crisp text. The tavern reads at 720.
-  const frame = await captureFrame(1440)
+  // The banner sits in the top 40%, where findBannerRect looks.
+  const frame = await captureFrame(1440, 0.4)
   if (!frame) return []
   const rect = findBannerRect(frame.bgra, frame.width, frame.height)
   if (!rect) return []
@@ -85,7 +86,8 @@ export interface ShopGeometry {
  * down agreed to 3px), at a quarter of the pixels.
  */
 export async function readShopSlots(): Promise<ShopGeometry | undefined> {
-  const frame = await captureFrame(720)
+  // The tavern sits in the top half, where findShopSlots looks.
+  const frame = await captureFrame(720, 0.5)
   if (!frame) return undefined
   const slots = findShopSlots(frame.bgra, frame.width, frame.height)
   return slots.length ? { slots, frame: { width: frame.width, height: frame.height } } : undefined

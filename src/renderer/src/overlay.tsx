@@ -4,7 +4,6 @@ import './styles.css'
 import { CardText, HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
 import { TRIBES, artUrl, buildProgress, buildsByLobby, parseCardLinks, currentSession, sortedTargets, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
 import type { BgSnapshot, Build, CardInfo } from '../../shared/types'
-import { startCapture } from './capture'
 
 const param = new URLSearchParams(location.search).get('kind')
 const kind = param === 'lobby' ? 'lobby' : param === 'build' ? 'build' : param === 'slots' ? 'slots' : 'odds'
@@ -267,6 +266,4 @@ function LobbyOverlay({ snap }: { snap: BgSnapshot }) {
   )
 }
 
-// The capture window draws nothing; it only streams the game for main.
-if (param === 'capture') startCapture()
-else createRoot(document.getElementById('root')!).render(<Overlay />)
+createRoot(document.getElementById('root')!).render(<Overlay />)

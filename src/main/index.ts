@@ -4,7 +4,6 @@ import { Store } from './store'
 import { Tracker } from './tracker'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
-import { initCapture } from './vision/stream'
 import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
 import { decodeBuild, encodeBuild } from './buildCode'
 import type { BgSnapshot, Build, Settings } from '../shared/types'
@@ -205,20 +204,6 @@ function createHighlightWindow() {
 }
 
 /**
- * Never shown: it streams the Hearthstone window for the screen reading in
- * vision/. Background throttling would starve a hidden window's video.
- */
-function createCaptureWindow() {
-  const win = new BrowserWindow({
-    show: false,
-    skipTaskbar: true,
-    webPreferences: { preload, contextIsolation: true, sandbox: false, backgroundThrottling: false },
-  })
-  loadPage(win, 'overlay', '?kind=capture')
-  initCapture(win)
-}
-
-/**
  * Keep the highlight window exactly over Hearthstone's client area, so the
  * renderer can work in game coordinates and ignore where the window is.
  */
@@ -357,7 +342,6 @@ app.whenReady().then(async () => {
   createOverlay('lobby')
   createOverlay('build')
   createHighlightWindow()
-  createCaptureWindow()
   followGameWindow()
   await tracker.start()
   broadcast('data:changed')
