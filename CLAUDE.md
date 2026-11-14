@@ -78,6 +78,9 @@ showed nothing, because the cost isn't load, it's latency.
   known offenders (see PLAN.md).
 - "Low CPU" in a trace doesn't clear a change: the symptom is the mouse, so verify with
   the user watching it, launching the app over a fullscreen game.
+- Launch with `--profile` (`npx electron-vite dev -- --profile`) to log every block
+  over 25ms and the startup timings. Keep profiling behind that flag: without it, it
+  must stay a no-op.
 
 ## Working while the user plays
 

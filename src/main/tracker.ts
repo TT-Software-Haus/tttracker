@@ -9,6 +9,7 @@ import { checkLogConfig, ensureLogConfig, findActiveLogDir, findInstallPath, ins
 import { LogTail, lastGameOffset } from './logs/logTail'
 import { readLobbyTribes, readShopSlots, stopVision } from './vision/heroSelect'
 import { stopCapture } from './vision/stream'
+import { mark, profiling } from './stallWatch'
 import { getGameWindowRect } from './vision/gameWindow'
 import type { Store } from './store'
 import type { BgSnapshot, BoardMinion, Build, SetupStatus } from '../shared/types'
@@ -215,6 +216,7 @@ export class Tracker extends EventEmitter {
     }
     try {
       await this.cards.init(this.cacheDir)
+      mark('cards loaded')
     } catch (err) {
       console.error('Could not load card data', err)
     }
@@ -225,7 +227,9 @@ export class Tracker extends EventEmitter {
       await ensureLogConfig(this.store.settings.hearthstonePath).catch((err) => console.warn('log config repair failed', err))
       this.logConfigOk = await checkLogConfig(this.store.settings.hearthstonePath)
     }
+    mark('log config checked')
     await this.attachToLogs()
+    mark('attached to logs')
     // Hearthstone creates a new log folder each launch; keep checking.
     this.dirTimer = setInterval(() => void this.attachToLogs(), 5000)
     this.publish()
@@ -327,6 +331,7 @@ export class Tracker extends EventEmitter {
 
     // Replay only the latest game, then follow live.
     const offset = await lastGameOffset(powerPath)
+    mark('found the last game in Power.log')
     let first = !this.powerLogIsNew
     // The replayed history is old: judge staleness by when the file was last written.
     this.lastLineAt = statSync(powerPath).mtimeMs
@@ -364,6 +369,7 @@ export class Tracker extends EventEmitter {
       if (job.at >= job.lines.length) this.lineQueue.shift()
     }
     if (this.lineQueue.length) setImmediate(() => this.drain())
+    else if (!this.moreComing) mark('log caught up')
   }
 
   private ingest(lines: string[], catchingUp: boolean) {
@@ -553,6 +559,14 @@ export class Tracker extends EventEmitter {
   }
 
   publish() {
+    if (!profiling) return this.publishNow()
+    const t0 = performance.now()
+    this.publishNow()
+    const ms = performance.now() - t0
+    if (ms > 16) mark(`publish took ${ms.toFixed(0)}ms`)
+  }
+
+  private publishNow() {
     // Mid-replay: wait for the rest, so a half-replayed game never shows.
     if ((this.lineQueue.length || this.moreComing) && this.lastSnapshot) return this.schedulePublish()
     const base = this.bg.snapshot()

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
-import { watchStalls } from './stallWatch'
+import { mark, watchStalls } from './stallWatch'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
@@ -201,6 +201,7 @@ function createHighlightWindow() {
   // Always click-through: this one sits over the board itself, so it must
   // never take a click meant for the game.
   highlightWin.setIgnoreMouseEvents(true, { forward: true })
+  mark('mouse hook installed: blocks from here on freeze the cursor')
   loadPage(highlightWin, 'overlay', '?kind=slots')
 }
 
@@ -344,11 +345,13 @@ app.whenReady().then(async () => {
   createOverlay('build')
   createHighlightWindow()
   followGameWindow()
-  // Logged so regressions show up in the dev log: a block here is a frozen
-  // mouse. Started after the windows exist: creating them blocks for ~300ms,
-  // but before any overlay is click-through there's no mouse hook to hold up.
-  watchStalls((ms) => console.warn(`[stall] main thread blocked for ${ms}ms (the user's mouse froze with it)`))
+  mark('windows created')
+  // With --profile: log every block, since a block here is a frozen mouse.
+  // Started after the windows exist: creating them blocks for ~300ms, but
+  // before any overlay is click-through there's no mouse hook to hold up.
+  watchStalls((ms) => console.warn(`[profile] ${performance.now().toFixed(0)}ms: main thread blocked for ${ms}ms (the user's mouse froze with it)`))
   await tracker.start()
+  mark('tracker started')
   broadcast('data:changed')
   updateOverlays()
 })

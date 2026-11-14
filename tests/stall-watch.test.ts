@@ -10,7 +10,7 @@ describe('the main-thread stall watchdog', () => {
 
   it('reports a block longer than the threshold, about as long as it was', async () => {
     const stalls: number[] = []
-    const stop = watchStalls((ms) => stalls.push(ms))
+    const stop = watchStalls((ms) => stalls.push(ms), 50, 20, true)
     await wait(60)
     busy(150)
     await wait(60)
@@ -20,9 +20,18 @@ describe('the main-thread stall watchdog', () => {
     expect(stalls[0]).toBeLessThan(250)
   })
 
+  it('is a no-op unless profiling is on', async () => {
+    const stalls: number[] = []
+    const stop = watchStalls((ms) => stalls.push(ms), 50, 20, false)
+    busy(150)
+    await wait(60)
+    stop()
+    expect(stalls).toEqual([])
+  })
+
   it('stays quiet when nothing blocks', async () => {
     const stalls: number[] = []
-    const stop = watchStalls((ms) => stalls.push(ms))
+    const stop = watchStalls((ms) => stalls.push(ms), 50, 20, true)
     await wait(200)
     stop()
     expect(stalls).toEqual([])

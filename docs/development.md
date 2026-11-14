@@ -6,6 +6,7 @@
 npm install
 npm run native     # cargo build of native/capture → native/capture.node
 npm run dev        # native, then electron-vite dev, hot reloading
+npm run dev -- -- --profile   # the same, with performance profiling logged
 npm test           # vitest: simulator + real-log replay
 npm run typecheck  # tsc --noEmit
 npm run build      # native, then all three targets into out/
@@ -18,6 +19,14 @@ module, `native/capture` (crates `napi` and `windows`). It's built with plain ca
 ABI-stable, so it needs no rebuild when Electron updates. Windows locks a loaded DLL, so
 **close the app before rebuilding it**: `npm run native` fails to copy (EBUSY) while the
 app is running, and `--watch` doesn't rebuild Rust.
+
+**Profiling** (`src/main/stallWatch.ts`) is off unless the app is launched with
+`--profile` (the packaged app takes it directly). Then the dev log gets `[profile]`
+lines: startup marks with times (windows created, the mouse hook going in, cards
+loaded, log caught up), any publish over 16ms, and every time the main thread was
+blocked for over 25ms. Off, it's all a no-op. Blocks
+matter because the overlays' forwarded click-through puts a mouse hook on that thread;
+see CLAUDE.md.
 
 First run: open **Setup**, click **Enable logging**, restart Hearthstone.
 
