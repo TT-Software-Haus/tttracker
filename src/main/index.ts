@@ -2,6 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
+import { watchStalls } from './stallWatch'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
@@ -328,6 +329,8 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  // Logged so regressions show up in the dev log: a block here is a frozen mouse.
+  watchStalls((ms) => console.warn(`[stall] main thread blocked for ${ms}ms (the user's mouse froze with it)`))
   store = new Store(app.getPath('userData'))
   tracker = new Tracker(store, join(app.getPath('userData'), 'carddata'))
   tracker.on('snapshot', (snap: BgSnapshot) => {
