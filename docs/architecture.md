@@ -197,7 +197,9 @@ two reads in a row agree on a new position. The tavern can move after it looks s
 after a spell was bought, the cards held their old places for a moment, then re-centred.
 And a one-read blip shouldn't move them: a freeze makes the cards hop. The log can't
 say where cards *are*, only which slot they're in, so the screen is the authority on
-position. Any change to what's on offer clears the boxes at once. A captured frame is the visible window, title bar included (DWM's extended
+position. Any change to what's on offer clears the boxes at once. In Duos, a frame showing your
+teammate's board (`vision/duoView.ts`: a cyan swirl in both top corners, which the log
+never mentions) clears them until your board is back. A captured frame is the visible window, title bar included (DWM's extended
 frame bounds), while the boxes are drawn over the client area, so `gameWindow.ts`
 returns both: boxes are scaled by the captured size and shifted by the client area's
 offset inside it. In fullscreen the two are the same; windowed at 150% the frame was

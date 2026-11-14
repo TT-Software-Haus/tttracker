@@ -61,6 +61,9 @@ pages; this one is the reasoning behind it.
   boxes are drawn over the client area. Fullscreen on this machine is borderless:
   other windows draw over it and capture works. True exclusive fullscreen would hide
   the overlays as well, and isn't supported.
+- **No boxes on your Duos teammate's board.** The log doesn't record switching views,
+  so it's read off the screen: their view has a bright cyan swirl in both top corners
+  (31-35% of pixels on a real frame), yours has dark curtains (0-0.2%).
 - Known gap: when Hearthstone hides the tier shields (seen late in a game), no boxes.
 
 ## Capture: three generations

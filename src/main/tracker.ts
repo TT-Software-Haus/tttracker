@@ -513,6 +513,17 @@ export class Tracker extends EventEmitter {
       const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
       // A failed read leaves no boxes, and the next pass tries again.
       if (!geo || !win || key !== this.highlightKey) return
+      // Duos, looking at your teammate's board: your boxes would land on their
+      // tavern (seen live). Clear them; reads go on, so they come back with
+      // your board.
+      if (geo.teammateView) {
+        this.highlightPending = ''
+        if (this.highlights.length) {
+          this.highlights = []
+          this.publish()
+        }
+        return
+      }
       // Boxes are matched to cards by slot number, so the screen has to show
       // the same number of cards as the log, spells included. Seen live, a box
       // landed on a spell: a missed end shield shifts every slot one over, and

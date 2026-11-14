@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import type { BgSnapshot, Build } from '../src/shared/types'
 
 // The screen is whatever these say it is.
-const screen = { slots: [] as { x: number; y: number; width: number; height: number }[], reads: 0, moves: 0 }
+const screen = { slots: [] as { x: number; y: number; width: number; height: number }[], reads: 0, moves: 0, teammateView: false }
 vi.mock('../src/main/vision/heroSelect', () => ({
   readLobbyTribes: async () => [],
   stopVision: async () => {},
-  readShopSlots: async () => (screen.reads++, screen.slots.length ? { slots: screen.slots, frame: { width: 1000, height: 500 } } : undefined),
+  readShopSlots: async () => (screen.reads++, screen.teammateView ? { slots: [], frame: { width: 1000, height: 500 }, teammateView: true } : screen.slots.length ? { slots: screen.slots, frame: { width: 1000, height: 500 } } : undefined),
 }))
 // Fullscreen by default: the capture covers exactly the client area.
 const game = { rect: { x: 0, y: 0, width: 1000, height: 500, captured: { x: 0, y: 0, width: 1000, height: 500 } } }
@@ -39,6 +39,7 @@ describe('highlight boxes over the tavern', () => {
     const { Tracker } = await import('../src/main/tracker')
     tracker = new Tracker(new Store(root), join(root, 'carddata'))
     screen.moves = 0
+    screen.teammateView = false // a failed test must not leave the next one on the teammate's board
     tracker.publish = () => screen.moves++
     // The log's tavern size, spells included. Defaults to what the screen shows.
     logSize = undefined
@@ -71,6 +72,21 @@ describe('highlight boxes over the tavern', () => {
     screen.slots = [slot(50), slot(150), slot(250)]
     await vi.advanceTimersByTimeAsync(1000)
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([250])
+  })
+
+  it("clears the boxes while you look at your Duos teammate's board, and brings them back", async () => {
+    // Seen live: your tavern's boxes landed on your teammate's.
+    screen.slots = [slot(100), slot(200), slot(300)]
+    screen.teammateView = false
+    tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights).toHaveLength(1)
+    screen.teammateView = true
+    await vi.advanceTimersByTimeAsync(500)
+    expect(tracker.highlights).toEqual([])
+    screen.teammateView = false
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
   })
 
   it('follows the cards when they move long after looking settled', async () => {

@@ -2,6 +2,7 @@ import { nativeImage } from 'electron'
 import { PSM, createWorker, type Worker } from 'tesseract.js'
 import { parseTribeBanner } from './tribeNames'
 import { findBannerRect, type Rect } from './bannerRect'
+import { isTeammateView } from './duoView'
 import { findShopSlots } from './shopSlots'
 import { captureFrame } from './stream'
 
@@ -75,6 +76,8 @@ export interface ShopGeometry {
   slots: Rect[]
   /** The captured frame's size, for scaling to the real window. */
   frame: { width: number; height: number }
+  /** Duos: the screen shows your teammate's board, not yours (no slots then). */
+  teammateView?: boolean
 }
 
 /**
@@ -89,6 +92,8 @@ export async function readShopSlots(): Promise<ShopGeometry | undefined> {
   // The tavern sits in the top half, where findShopSlots looks.
   const frame = await captureFrame(720, 0.5)
   if (!frame) return undefined
+  const size = { width: frame.width, height: frame.height }
+  if (isTeammateView(frame.bgra, frame.width, frame.height)) return { slots: [], frame: size, teammateView: true }
   const slots = findShopSlots(frame.bgra, frame.width, frame.height)
-  return slots.length ? { slots, frame: { width: frame.width, height: frame.height } } : undefined
+  return slots.length ? { slots, frame: size } : undefined
 }
