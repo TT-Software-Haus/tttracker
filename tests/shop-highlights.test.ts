@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os'
 import type { BgSnapshot, Build } from '../src/shared/types'
 
 // The screen is whatever these say it is.
-const screen = { slots: [] as { x: number; y: number; width: number; height: number }[] }
+const screen = { slots: [] as { x: number; y: number; width: number; height: number }[], reads: 0 }
 vi.mock('../src/main/vision/heroSelect', () => ({
   readLobbyTribes: async () => [],
   stopVision: async () => {},
-  readShopSlots: async () => (screen.slots.length ? { slots: screen.slots, frame: { width: 1000, height: 500 } } : undefined),
+  readShopSlots: async () => (screen.reads++, screen.slots.length ? { slots: screen.slots, frame: { width: 1000, height: 500 } } : undefined),
 }))
 // Fullscreen by default: the capture covers exactly the client area.
 const game = { rect: { x: 0, y: 0, width: 1000, height: 500, captured: { x: 0, y: 0, width: 1000, height: 500 } } }
@@ -61,6 +61,21 @@ describe('highlight boxes over the tavern', () => {
     screen.slots = [slot(50), slot(150), slot(250)]
     await vi.advanceTimersByTimeAsync(1000)
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([250])
+  })
+
+  it('stops reading once the cards have settled, until the tavern changes', async () => {
+    // Reading every second all turn was the suspect for hitches seen live.
+    screen.slots = [slot(100), slot(200), slot(300)]
+    screen.reads = 0
+    tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(screen.reads).toBe(2) // placed, then confirmed in the same place
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
+
+    tracker.refreshHighlights(base([minion('BRANN', 2)]), build)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(screen.reads).toBe(4)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([200])
   })
 
   it('drops the boxes the moment the tavern changes, before the next read', async () => {

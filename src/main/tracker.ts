@@ -416,6 +416,11 @@ export class Tracker extends EventEmitter {
     this.highlightTimer = undefined
     const key = this.highlightKey
     const targets = this.highlightTargets
+    // Set once two reads in a row put the boxes in the same place: the cards
+    // have stopped sliding, and they won't move again until the log says the
+    // tavern changed, which restarts the loop. Polling all turn instead grabbed
+    // a frame every second, and the user saw hitches with the boxes on.
+    let placed = false
     try {
       if (!targets.length) return
       const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
@@ -440,13 +445,19 @@ export class Tracker extends EventEmitter {
         const r = geo.slots[(m.pos ?? 0) - 1]
         return r ? [{ x: Math.round(r.x * sx + ox), y: Math.round(r.y * sy + oy), width: Math.round(r.width * sx), height: Math.round(r.height * sy), ...(m.debug && { debug: true }) }] : []
       })
-      if (JSON.stringify(boxes) === JSON.stringify(this.highlights)) return
+      if (JSON.stringify(boxes) === JSON.stringify(this.highlights)) {
+        placed = true
+        return
+      }
       this.highlights = boxes
       this.publish()
     } catch (err) {
       console.warn('could not locate the tavern on screen', err)
     } finally {
-      if (this.highlightTargets.length) this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_POLL_MS)
+      // ponytail: a game window moved or resized after placing keeps its old
+      // boxes until the tavern next changes; poll again here if that matters.
+      if (placed && key === this.highlightKey) this.highlightLoop = false
+      else if (this.highlightTargets.length) this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_POLL_MS)
       else {
         this.highlightLoop = false
         // Nothing left to box: close the stream until the next shop needs it.
