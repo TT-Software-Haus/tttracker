@@ -108,8 +108,33 @@ at the same position, printed attack). Repeat until stable, max 50 passes.
 - **`side.start`**: the warband as the fight (or reserve) began (Magnanimoose).
 - **Per-combat limits** on Rally sections are enforced per minion (`limited()`).
 
-Measured cost of the hooks: about 10% per iteration on a busy 7v7 (28 to 31µs);
-5000 iterations still take about 160ms.
+- **`side.dead`**: friendly minions that died this combat, as they died ("your first 2
+  Mechs that died this combat", Elementium Squirrel Bomb).
+- **`side.summonBuffs`**: buffs applied to every later summon that matches ("for the rest
+  of this combat, after you summon a Pirate", tribe auras like Raptor Elder's).
+- **`summon(side, m, pos, plain)`**: card summons are multiplied by Khadgar
+  (`summonExtra`) and Captain Bonerender (`copySummons`); Reborn, hand summons and the
+  copies themselves are `plain`. A summon that doesn't fit fires `onSummonFail`.
+  Effects that summon reset `c.batch`, which "Give them Taunt" reads.
+- **Targeting** (`fx.targeting`): Zapp / Merciless Mammoth hit the lowest Attack
+  (ignoring Taunt); Worgen Vigilante prefers an enemy it can kill.
+- **Damage**: `shieldHits` (a Divine Shield that takes N hits), `doubleDamage`
+  (Whitemane), `redirectDamage` (Mad Matador, once).
+- **Triggers from hand** (`summonSelfFromHand`, Free-Flying Feathermane), **when you have
+  space** for minions as well as hero powers, **any-side deaths** (`onAnyDeath`), and
+  first-attack immunity (`side.immuneAttacks`, Eclipsion Illidari).
+- **Spells cast in combat** cast extra times for each `spellExtra` (Maelstrom Emergent,
+  Balinda); **Blood Gems** get `gemBonus` (Agamaggan) and `gemMultiplier` (Needling
+  Crone) when played.
+
+Quoted text ('Give your minions "Deathrattle: Summon a 1/1 Murloc."') is masked while a
+card is split into sections and sentences, so its header and full stop don't split it,
+and restored when an action is read. "Summon a 1/1 Pirate. It attacks immediately." is
+read as one action (before, the second sentence was dropped and the Pirate never
+attacked).
+
+Measured cost: about 40µs per iteration on a busy 7v7, up from 28µs before the card
+work. 5000 iterations take about 200ms, half the 400ms budget, on the sim worker.
 
 ### Keywords
 

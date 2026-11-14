@@ -31,6 +31,8 @@ export interface FriendlyAttackTrigger {
   tribe?: string
   excludeSelf: boolean
   rallyOnly?: boolean
+  /** "(3 times per combat.)" */
+  limit?: number
   effects: Effect[]
 }
 
@@ -67,6 +69,35 @@ export interface CardFx {
   onFriendlyDamage?: FriendlyAttackTrigger[]
   /** "When you have space in combat, ...": runs once, the first time the board has room. */
   whenSpace?: Effect[]
+  /** Who this attacks: "the enemy minion with the lowest Attack", "an enemy minion it can kill". */
+  targeting?: 'lowestAtk' | 'canKill'
+  /** "This minion's Divine Shield takes N hits to break." */
+  shieldHits?: number
+  /** "When this would take damage, deal it to a random enemy minion instead. (Once per combat.)" */
+  redirectDamage?: boolean
+  /** Khadgar: card summons make this many extra copies. */
+  summonExtra?: number
+  /** Captain Bonerender: "After you summon a different minion in combat, summon an extra copy of it." */
+  copySummons?: number
+  /** "Whenever you would summon a minion that doesn't fit" (and "If there's no space"). */
+  onSummonFail?: Effect[]
+  /** "Whenever a minion dies" on either side (ev.other = it). */
+  onAnyDeath?: Effect[]
+  /** In hand: "After a friendly <tribe> dies, summon this from your hand for this combat only." */
+  summonSelfFromHand?: { tribe?: string }
+  /** Spells cast in combat cast this many extra times (Maelstrom Emergent, Balinda). */
+  spellExtra?: number
+  /** Blood Gems: an extra +A/+H each (Agamaggan), or doubled in combat (Needling Crone). */
+  gemBonus?: { atk: number; hp: number }
+  gemMultiplier?: number
+  /** "Your first N minions that attack have Immune while Attacking for one attack only." */
+  immuneFirstAttacks?: number
+  /** "Deity." (Y'Shaarj and friends: left out of "minions that died this combat"). */
+  deity?: boolean
+  /** An aura on its tribe, for minions summoned in combat ("Your Beasts have +3/+2"). */
+  summonAura?: { pred: (m: Minion) => boolean; atk: number; hp: number }
+  /** "This is Reborn with full stats" / "with full Attack". */
+  rebornFull?: boolean | 'atk' 
   /** "Whenever this kills a minion" (ev.target = the victim, ev.attacking). */
   onKill?: Effect[]
   /** "Whenever this takes damage" */
@@ -116,6 +147,15 @@ function tribeOf(word: string): string | undefined {
   return TRIBES[w] ?? TRIBES[word.toLowerCase()]
 }
 
+/**
+ * Quoted text ('Give your minions "Deathrattle: Summon a 1/1 Murloc."') is masked while a card is
+ * split into sections and sentences, so its header and full stop don't split it, and restored when
+ * an action is read. Masks are only ever appended to, and compiling is synchronous.
+ */
+const QUOTED: string[] = []
+const maskQuotes = (t: string) => t.replace(/"[^"]*"/g, (q) => `§${QUOTED.push(q) - 1}§`)
+const unmaskQuotes = (t: string) => t.replace(/§(\d+)§/g, (_, i) => QUOTED[Number(i)])
+
 export function cleanText(text: string | undefined): string {
   return (text ?? '')
     .replace(/<\/?[a-z]+>/gi, '')
@@ -159,14 +199,51 @@ function parseSelector(phrase: string): Selector | undefined {
     return (_c, _self, side) => side.hand.slice(0, n)
   }
   if (p === 'all minions') return (c) => c.sides.flatMap((sd) => c.alive(sd))
-  if ((m = /^your (left|right)-most minion$/.exec(p))) {
+  if ((m = /^your (left|right)-most (\w+?)s?$/.exec(p)) && (m[2] === 'minion' || tribeOf(m[2]))) {
     const left = m[1] === 'left'
+    const tribe = m[2] === 'minion' ? undefined : tribeOf(m[2])
     return (c, _self, side) => {
-      const a = c.alive(side)
+      const a = c.alive(side).filter((x) => !tribe || hasTribe(x, tribe))
       const t = left ? a[0] : a[a.length - 1]
       return t ? [t] : []
     }
   }
+  if ((m = /^your (two|\d+) left-most (\w+?)s$/.exec(p))) {
+    const n = num(m[1])
+    const tribe = m[2] === 'minion' ? undefined : tribeOf(m[2])
+    return (c, _self, side) => c.alive(side).filter((x) => !tribe || hasTribe(x, tribe)).slice(0, n)
+  }
+  if ((m = /^the (\d+|two) minions to the right of this$/.exec(p))) {
+    const n = num(m[1])
+    return (c, self, side) => side.minions.slice(side.minions.indexOf(self) + 1).filter((x) => !c.isDead(x)).slice(0, n)
+  }
+  if (p === 'the minion to the right of this' || p === 'the minion to the left of this') {
+    const d = p.includes('right') ? 1 : -1
+    return (c, self, side) => {
+      const t = side.minions[side.minions.indexOf(self) + d]
+      return t && !c.isDead(t) ? [t] : []
+    }
+  }
+  if (p === 'the minion that killed this') return (c, self) => (self.killedBy && !c.isDead(self.killedBy) ? [self.killedBy] : [])
+  if (p === 'all friendly minions') return (c, _self, side) => c.alive(side)
+  if (p === 'friendly minions other than it') return (c, _self, side, ev) => c.alive(side).filter((x) => x !== ev.other)
+  if ((m = /^a friendly (\w+) other than it$/.exec(p))) {
+    const tribe = m[1] === 'minion' ? undefined : tribeOf(m[1])
+    return (c, self, side, ev) => [c.pick(c.alive(side).filter((x) => x !== ev.other && x !== self && (!tribe || hasTribe(x, tribe))))].filter((x): x is Minion => !!x)
+  }
+  if (p === 'it and this minion') return (_c, self, _side, ev) => [ev.other, self].filter((x): x is Minion => !!x)
+  if (p === 'minions in your hand and board') return (c, _self, side) => [...c.alive(side), ...side.hand]
+  if ((m = /^an? (\w+) in your hand$/.exec(p)) && tribeOf(m[1])) {
+    const tribe = tribeOf(m[1])!
+    return (c, _self, side) => [c.pick(side.hand.filter((x) => hasTribe(x, tribe)))].filter((x): x is Minion => !!x)
+  }
+  if (p === 'an adjacent minion') {
+    return (c, self, side) => {
+      const i = side.minions.indexOf(self)
+      return [c.pick([side.minions[i - 1], side.minions[i + 1]].filter((x): x is Minion => !!x && !c.isDead(x)))].filter((x): x is Minion => !!x)
+    }
+  }
+  if (p === 'them') return (c) => c.batch.filter((x) => !c.isDead(x))
   if ((m = /^your (lowest|highest)-attack minion$/.exec(p))) {
     const low = m[1] === 'lowest'
     return (c, _self, side) => {
@@ -218,6 +295,43 @@ function parseSelector(phrase: string): Selector | undefined {
     const tribe = m[2] === 'minion' ? undefined : tribeOf(m[2])
     return (c, self, side) => c.pickN(friendlies(c, side).filter((x) => x !== self && (!tribe || hasTribe(x, tribe))), n)
   }
+  return undefined
+}
+
+/** What one Blood Gem gives on this side now: +1/+1, plus in-combat upgrades and auras (Agamaggan, Needling Crone). */
+function bloodGem(c: Combat, side: Side): { atk: number; hp: number } {
+  let atk = side.bloodGem.atk
+  let hp = side.bloodGem.hp
+  let k = 1
+  for (const f of c.alive(side)) {
+    atk += f.fx.gemBonus?.atk ?? 0
+    hp += f.fx.gemBonus?.hp ?? 0
+    if (f.fx.gemMultiplier) k = Math.max(k, f.fx.gemMultiplier)
+  }
+  return { atk: atk * k, hp: hp * k }
+}
+
+/** Make a minion Golden: the golden card's doubled base stats, with its enchantments on top. */
+function makeGolden(c: Combat, m: Minion) {
+  const card = c.cards.get(m.cardId)
+  if (!card?.goldenId) return
+  c.buff(m, card.attack ?? 0, card.health ?? 0)
+  m.golden = true
+  m.cardId = card.goldenId
+  m.fx = c.fx(card.goldenId)
+}
+
+/** Pool cards for "a random Beast", "a random Battlecry minion", "a random Divine Shield minion", ... */
+function randomPool(what: string, cards: CardSource, tiers?: string): CardInfo[] | undefined {
+  const w = what.toLowerCase().replace(/ minions?$/, '')
+  const tierList = tiers ? (tiers.match(/\d+/g) ?? []).map(Number) : undefined
+  const base = cards.pool().filter((c) => !c.normalId && c.type === 'MINION' && (!tierList || tierList.includes(c.techLevel ?? 0)))
+  const tribe = tribeOf(w.replace(/s$/, ''))
+  if (tribe) return base.filter((c) => c.races?.includes(tribe) || c.races?.includes('ALL'))
+  const mech: Record<string, string> = { battlecry: 'BATTLECRY', deathrattle: 'DEATHRATTLE', rally: 'BACON_RALLY', 'divine shield': 'DIVINE_SHIELD', taunt: 'TAUNT' }
+  if (mech[w]) return base.filter((c) => c.mechanics?.includes(mech[w]))
+  // Legendary isn't in the slimmed card data: high-Tier minions stand in (approximated in compileFx).
+  if (w === 'legendary') return base.filter((c) => (c.techLevel ?? 0) >= 5)
   return undefined
 }
 
@@ -276,7 +390,14 @@ function parseKeywords(s: string | undefined): string[] | undefined {
 const IRRELEVANT = /^(get |add |discover|your teammate|you and your teammate|reduce|your tavern spells|after the tavern|improve|give minions in the tavern|give a random minion in it|refresh|golden ones keep|it opens|trigger the battlecries|gain .* gold|it attacks immediately|if you already have)/i
 
 function parseAction(sentence: string, cards: CardSource, self: CardInfo | undefined): Effect | 'ignore' | undefined {
-  let s = sentence.trim().replace(/\.$/, '')
+  const r = parseActionTimes(sentence, cards, self)
+  // "(except Charmwing)": the selectors already leave this minion out.
+  if (r === undefined && / \(except [^)]*\)\.?$/i.test(sentence)) return parseActionTimes(sentence.replace(/ \(except [^)]*\)(\.?)$/i, '$1'), cards, self)
+  return r
+}
+
+function parseActionTimes(sentence: string, cards: CardSource, self: CardInfo | undefined): Effect | 'ignore' | undefined {
+  let s = unmaskQuotes(sentence.trim()).replace(/\.$/, '')
   let times = 1
   s = s.replace(/ permanently(?=,? twice$|$)/i, '')
   if (/,? twice$/i.test(s)) {
@@ -295,6 +416,35 @@ function parseAction(sentence: string, cards: CardSource, self: CardInfo | undef
 function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefined): Effect | 'ignore' | undefined {
   let m: RegExpExecArray | null
 
+  // Summon N A/H <Name>s that attack immediately (Scallywag, Sharptooth Snapper, Twilight Hatchling)
+  if ((m = /^summon (a|an|one|two|three|\d+) (\d+)\/(\d+) (.+?) that attacks? immediately$/i.exec(s))) {
+    const count = num(m[1])
+    const atk = Number(m[2])
+    const hp = Number(m[3])
+    const name = m[4].replace(/s$/, '')
+    const card = cards.bgMinionsNamed(name).find((x) => !x.normalId && x.attack === atk) ?? cards.bgMinionsNamed(name).find((x) => !x.normalId)
+    const tribe = tribeOf(name)
+    return (c, me, side, ev) => {
+      for (let i = 0; i < count; i++) {
+        const tok = c.summon(side, c.makeMinion({ card, name, atk, hp, tribes: card ? undefined : tribe ? [tribe] : [] }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+        if (tok && c.alive(c.other(side)).length) c.singleAttack(side, tok)
+      }
+    }
+  }
+  // Summon N random <X>s and give it/them <Keywords> (Imp Mama)
+  if ((m = /^summon (a|an|one|two|\d+) random (\w+?)s? and give (?:it|them) (.+)$/i.exec(s)) && parseKeywords(m[3])) {
+    const count = num(m[1])
+    const pool = randomPool(m[2], cards)
+    const kws = parseKeywords(m[3])!
+    if (pool?.length)
+      return (c, me, side, ev) => {
+        for (let i = 0; i < count; i++) {
+          const card = c.pick(pool)
+          const tok = card && c.summon(side, c.makeMinion({ card }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+          if (tok) for (const k of kws) setKeyword(tok, k, true)
+        }
+      }
+  }
   // Summon N A/H Name(s) [with Keywords]
   // (Falls through when the "with ..." part isn't keywords: "with this minion's maximum stats" has its own template.)
   if ((m = /^summon (a|an|one|two|three|four|five|six|seven|\d+) (?:(\d+)\/(\d+) )?(.+?)(?: that .+)?(?: with (.+))?$/i.exec(s)) && parseKeywords(m[5])) {
@@ -337,6 +487,7 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
   }
 
   // Give <who> +A/+H [and Keyword...]  |  Give <who> +A Attack  |  Give <who> Keyword
+  s = s.replace(/^(give .+?) another (\+\d)/i, '$1 $2')
   if ((m = /^give (.+?) \+(\d+)\/\+(\d+)(?: and (.+))?$/i.exec(s)) || (m = /^give (.+?) \+(\d+) (attack|health)(?: and (.+))?$/i.exec(s))) {
     // Falls through when the target or the tail isn't one of these ("... and summon it", "... of each type").
     const sel = parseSelector(m[1])
@@ -365,19 +516,20 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
   if ((m = /^give (.+?) ((?:(?:divine shield|reborn|taunt|venomous|windfury)(?:,? and |, )?)+)$/i.exec(s))) {
     const sel = parseSelector(m[1])
     const kws = parseKeywords(m[2])
-    if (!sel || !kws) return undefined
-    return (c, me, side, ev) => {
-      for (const t of sel(c, me, side, ev)) for (const k of kws) setKeyword(t, k, true)
-    }
+    if (sel && kws)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) for (const k of kws) setKeyword(t, k, true)
+      }
   }
 
   // Give <who> stats equal to (twice) your Tier | Gain stats equal to (double) your Tier
-  if ((m = /^(?:give (.+?)|gain) stats equal to (?:(double|twice) )?your tier$/i.exec(s))) {
+  if ((m = /^(?:give (.+?)|gain) (stats|attack) equal to (?:(double|twice) )?your tier$/i.exec(s))) {
     const sel = parseSelector(m[1] ?? 'this')
     if (!sel) return undefined
-    const k = m[2] ? 2 : 1
+    const k = m[3] ? 2 : 1
+    const hpToo = m[2].toLowerCase() === 'stats'
     return (c, me, side, ev) => {
-      for (const t of sel(c, me, side, ev)) c.buff(t, side.heroTier * k, side.heroTier * k)
+      for (const t of sel(c, me, side, ev)) c.buff(t, side.heroTier * k, hpToo ? side.heroTier * k : 0)
     }
   }
   // Give this minion's maximum stats to <who>
@@ -477,9 +629,398 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
       }
     }
   }
+  // Gain +N Health | Gain +N Attack and Keyword(s) | Gain Keyword(s) (and attack immediately)
+  if ((m = /^gain \+(\d+) health$/i.exec(s))) {
+    const hp = Number(m[1])
+    return (c, me) => c.buff(me, 0, hp)
+  }
+  if ((m = /^gain \+(\d+) attack and (.+)$/i.exec(s)) && parseKeywords(m[2])) {
+    const atk = Number(m[1])
+    const kws = parseKeywords(m[2])!
+    return (c, me) => {
+      c.buff(me, atk, 0)
+      for (const k of kws) setKeyword(me, k, true)
+    }
+  }
+  if ((m = /^gain ((?:(?:divine shield|reborn|taunt|venomous|windfury)(?:,? and |, )?)+?)( and attack immediately)?$/i.exec(s)) && parseKeywords(m[1])) {
+    const kws = parseKeywords(m[1])!
+    const attack = !!m[2]
+    return (c, me, side) => {
+      for (const k of kws) setKeyword(me, k, true)
+      if (attack && c.alive(c.other(side)).length) c.singleAttack(side, me)
+    }
+  }
+  // Gain its (maximum) stats | its Attack | its Deathrattle (ev.other: the minion the trigger is about)
+  if ((m = /^gain (double )?its (maximum stats|stats|attack|deathrattle)$/i.exec(s))) {
+    const k = m[1] ? 2 : 1
+    const what = m[2].toLowerCase()
+    return (c, me, _side, ev) => {
+      const o = ev.other
+      if (!o) return
+      if (what === 'deathrattle') {
+        for (const dr of [...(o.fx.deathrattle ? [o.fx.deathrattle] : []), ...(o.grantedDeathrattles ?? [])]) (me.grantedDeathrattles ??= []).push(dr)
+      } else c.buff(me, o.atk * k, (what === 'attack' ? 0 : what === 'stats' ? o.hp : o.maxHp) * k)
+    }
+  }
+  // Give <who> this minion's Attack | Health equal to its/this minion's Attack
+  if ((m = /^give (.+?) this minion's attack$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) c.buff(t, me.atk, 0)
+      }
+  }
+  if ((m = /^give (.+?) health equal to (double )?(its|their|this minion's) attack$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    const k = m[2] ? 2 : 1
+    const mine = m[3].toLowerCase() === "this minion's"
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) c.buff(t, 0, (mine ? me.atk : t.atk) * k)
+      }
+  }
+  // Give <who> the stats of the highest-Attack minion in your hand
+  if ((m = /^give (.+?) the stats of the highest-attack minion in your hand$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    if (sel)
+      return (c, me, side, ev) => {
+        const best = [...side.hand].sort((a, b) => b.atk - a.atk)[0]
+        if (best) for (const t of sel(c, me, side, ev)) c.buff(t, best.atk, best.hp)
+      }
+  }
+  // Deal N damage to your (other) minions
+  if ((m = /^deal (\d+) damage to your (other )?minions$/i.exec(s))) {
+    const n = Number(m[1])
+    const other = !!m[2]
+    return (c, me, side) => {
+      for (const t of c.alive(side)) if (!other || t !== me) c.damage(t, n, me)
+    }
+  }
+  // Give your minions +N Health and deal N damage to them
+  if ((m = /^give your minions \+(\d+) health and deal (\d+) damage to them$/i.exec(s))) {
+    const hp = Number(m[1])
+    const n = Number(m[2])
+    return (c, me, side) => {
+      for (const t of c.alive(side)) c.buff(t, 0, hp)
+      for (const t of c.alive(side)) c.damage(t, n, me)
+    }
+  }
+  // Deal damage equal to this minion's Attack to a random enemy minion (other than the target)
+  if ((m = /^deal damage equal to this minion's attack to (a|\d+|two) random enemy minions?( other than the target)?$/i.exec(s))) {
+    const n = num(m[1])
+    const notTarget = !!m[2]
+    return (c, me, side, ev) => {
+      for (const t of c.pickN(c.alive(c.other(side)).filter((x) => !notTarget || x !== ev.target), n)) c.damage(t, me.atk, me)
+    }
+  }
+  // Deal N damage to adjacent minions and give them +A Attack (Irate Rooster: its own neighbours)
+  if ((m = /^deal (\d+) damage to adjacent minions and give them \+(\d+) attack$/i.exec(s))) {
+    const n = Number(m[1])
+    const atk = Number(m[2])
+    const sel = parseSelector('adjacent minions')!
+    return (c, me, side, ev) => {
+      for (const t of sel(c, me, side, ev)) {
+        c.damage(t, n, me)
+        c.buff(t, atk, 0)
+      }
+    }
+  }
+  // Deal N damage to the target's neighbors
+  if ((m = /^deal (\d+) damage to the target's neighbors$/i.exec(s))) {
+    const n = Number(m[1])
+    return (c, me, side, ev) => {
+      if (!ev.target) return
+      const enemy = c.other(side)
+      const i = enemy.minions.indexOf(ev.target)
+      for (const t of [enemy.minions[i - 1], enemy.minions[i + 1]]) if (t && !c.isDead(t)) c.damage(t, n, me)
+    }
+  }
+  // Deal N damage to the N nearest enemy minions (nearest to where this is, or was)
+  if ((m = /^deal (\d+) damage to the (\d+|two) nearest enemy minions$/i.exec(s))) {
+    const n = Number(m[1])
+    const k = num(m[2])
+    return (c, me, side, ev) => {
+      const at = side.minions.indexOf(me) >= 0 ? side.minions.indexOf(me) : ev.pos ?? 0
+      const enemies = c.alive(c.other(side))
+      const near = c.pickN(enemies, enemies.length).sort((a, b) => Math.abs(enemies.indexOf(a) - at) - Math.abs(enemies.indexOf(b) - at))
+      for (const t of near.slice(0, k)) c.damage(t, n, me)
+    }
+  }
+  // Deal N damage to a random enemy minion for each of your <Tribe>s that died this combat
+  if ((m = /^deal (\d+) damage to a random enemy minion for each of your (\w+?)s? that died this combat$/i.exec(s)) && tribeOf(m[2])) {
+    const n = Number(m[1])
+    const tribe = tribeOf(m[2])!
+    return (c, me, side) => {
+      for (const _ of side.dead.filter((d) => hasTribe(d, tribe))) {
+        const t = c.pick(c.alive(c.other(side)))
+        if (t) c.damage(t, n, me)
+      }
+    }
+  }
+  // Summon a copy / N copies of this (minion)
+  if ((m = /^summon (a|an|one|two|three|\d+) cop(?:y|ies) of this(?: minion)?$/i.exec(s))) {
+    const count = num(m[1])
+    return (c, me, side, ev) => {
+      for (let i = 0; i < count; i++) c.summon(side, c.minionCopy(me), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+    }
+  }
+  // Summon a number of A/H Rats equal to this minion's Attack
+  if ((m = /^summon a number of (\d+)\/(\d+) (.+?)s? equal to this minion's attack$/i.exec(s))) {
+    const atk = Number(m[1])
+    const hp = Number(m[2])
+    const name = m[3]
+    const card = cards.bgMinionsNamed(name).find((x) => !x.normalId)
+    return (c, me, side, ev) => {
+      for (let i = 0; i < me.atk; i++) if (!c.summon(side, c.makeMinion({ card, name, atk, hp }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)) break
+    }
+  }
+  // Summon (and get) N random <Tribe>s / <Mechanic> minions / Beasts from Tiers 2, 3, and 4
+  if ((m = /^summon (?:and get )?(a|an|one|two|three|\d+) random (golden )?(.+?)(?: minions?)?(?: from tiers ([\d, and]+))?$/i.exec(s))) {
+    const count = num(m[1])
+    const golden = !!m[2]
+    const pool = randomPool(m[3], cards, m[4])?.map((x) => (golden && x.goldenId ? cards.get(x.goldenId) ?? x : x))
+    if (pool?.length)
+      return (c, me, side, ev) => {
+        c.batch = []
+        for (let i = 0; i < count; i++) {
+          const card = c.pick(pool)
+          if (card) c.summon(side, c.makeMinion({ card }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+        }
+      }
+  }
+  // Set its stats to A/H (the minion just summoned) | Set the target's stats to A/H
+  if ((m = /^set (its|the target's) stats to (\d+)\/(\d+)$/i.exec(s))) {
+    const target = m[1].toLowerCase() !== 'its'
+    const atk = Number(m[2])
+    const hp = Number(m[3])
+    return (c, _me, _side, ev) => {
+      const t = target ? ev.target : c.lastSummoned
+      if (!t || c.isDead(t)) return
+      t.atk = atk
+      t.hp = t.maxHp = hp
+    }
+  }
+  // Set this minion's Attack and Health to match the highest in the battlefield
+  if ((m = /^set this minion's attack and health to match (double )?the highest in the battlefield$/i.exec(s))) {
+    const k = m[1] ? 2 : 1
+    return (c, me) => {
+      const all = c.sides.flatMap((sd) => c.alive(sd))
+      me.atk = Math.max(...all.map((x) => x.atk)) * k
+      me.hp = me.maxHp = Math.max(...all.map((x) => x.hp)) * k
+    }
+  }
+  // Summon your first N <Tribe>s that died this combat with their maximum stats | plain copies of ...
+  if ((m = /^summon (?:plain copies of )?your first (\d+|two)? ?(\w+?)s? that died this combat(?: with (?:its|their) maximum stats)?$/i.exec(s)) && tribeOf(m[2])) {
+    const n = m[1] ? num(m[1]) : 1
+    const tribe = tribeOf(m[2])!
+    const plain = /plain copies/i.test(s)
+    return (c, me, side, ev) => {
+      let pos = ev.pos ?? side.minions.indexOf(me) + 1
+      for (const d of side.dead.filter((x) => x !== me && hasTribe(x, tribe) && !x.fx.deity).slice(0, n)) {
+        const card = c.cards.get(d.cardId)
+        const copy = plain && card ? c.makeMinion({ card }) : c.makeMinion({ card, name: d.name, atk: d.atk, hp: d.maxHp, tribes: d.tribes })
+        if (c.summon(side, copy, pos)) pos++
+      }
+    }
+  }
+  // Transform into a copy of the minion to the left of this (Karmic Chameleon)
+  if ((m = /^transform into a (golden )?copy of the minion to the left of this$/i.exec(s))) {
+    const golden = !!m[1]
+    return (c, me, side) => {
+      const i = side.minions.indexOf(me)
+      const left = side.minions[i - 1]
+      if (i < 0 || !left || c.isDead(left)) return
+      const copy = c.minionCopy(left)
+      if (golden && !copy.golden) makeGolden(c, copy)
+      side.minions[i] = copy
+    }
+  }
+  // Make your (N) right-most minion(s) Golden | Make your lowest-Tier minion Golden
+  if ((m = /^make your (right-most minion|(\d+|two) right-most minions|lowest-tier minion|(two|\d+) lowest-tier minions) golden$/i.exec(s))) {
+    const what = m[1].toLowerCase().replace(/^(two|\d+) /, '')
+    const n = m[2] ? num(m[2]) : m[3] ? num(m[3]) : 1
+    return (c, me, side) => {
+      const others = c.alive(side).filter((x) => x !== me && !x.golden)
+      const picks = what.startsWith('lowest') ? [...others].sort((a, b) => a.tier - b.tier).slice(0, n) : others.slice(-n)
+      for (const t of picks) makeGolden(c, t)
+    }
+  }
+  // Trigger your (two) left-most Deathrattle(s) (except this minion's)
+  if ((m = /^trigger your (left-most|two left-most) deathrattles?(?: \(except this minion's\))?$/i.exec(s))) {
+    const n = m[1].toLowerCase() === 'left-most' ? 1 : 2
+    return (c, me, side) => {
+      for (const t of c.alive(side).filter((x) => x !== me && c.hasDeathrattle(x)).slice(0, n)) c.triggerDeathrattle(t, side, side.minions.indexOf(t) + 1)
+    }
+  }
+  // Battlecries are shop effects the sim doesn't run (flagged approximated in compileFx).
+  if (/^trigger (your right-most battlecry|the battlecry of an adjacent minion)$/i.test(s)) return () => {}
+  // Give <who> +A Attack and this Rally (Stomping Stegodon)
+  if ((m = /^give (.+?) \+(\d+) attack and this rally$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    const atk = Number(m[2])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) {
+          c.buff(t, atk, 0)
+          if (me.fx.rally) (t.grantedRallies ??= []).push(me.fx.rally)
+        }
+      }
+  }
+  // Your minions have +N Attack (for the rest of this combat) | After you summon a <Tribe>, give it +N Attack
+  // | Your odd-Tier minions have +A/+H  ("For the rest of this combat, " is stripped above)
+  if ((m = /^your (minions|odd-tier minions|even-tier minions) have \+(\d+)(?:\/\+(\d+)| attack)(?: for the rest of this combat)?$/i.exec(s))) {
+    const which = m[1].toLowerCase()
+    const atk = Number(m[2])
+    const hp = Number(m[3] ?? 0)
+    const pred = (x: Minion) => which === 'minions' || (which.startsWith('odd') ? x.tier % 2 === 1 : x.tier % 2 === 0)
+    return (c, _me, side) => {
+      for (const t of c.alive(side)) if (pred(t)) c.buff(t, atk, hp)
+      side.summonBuffs.push({ pred, atk, hp })
+    }
+  }
+  if ((m = /^after you summon an? (\w+), give it \+(\d+) attack$/i.exec(s)) && tribeOf(m[1])) {
+    const tribe = tribeOf(m[1])!
+    const atk = Number(m[2])
+    return (_c, _me, side) => void side.summonBuffs.push({ pred: (x) => hasTribe(x, tribe), atk, hp: 0 })
+  }
+  // Give you and your opponent's N left-most minions Divine Shield
+  if ((m = /^give you and your opponent's (\d+) left-most minions divine shield$/i.exec(s))) {
+    const n = Number(m[1])
+    return (c) => {
+      for (const sd of c.sides) for (const t of c.alive(sd).slice(0, n)) t.divineShield = true
+    }
+  }
+  // If you have no minions with Divine Shield, give adjacent minions Divine Shield
+  if (/^if you have no minions with divine shield, give adjacent minions divine shield$/i.test(s)) {
+    const sel = parseSelector('adjacent minions')!
+    return (c, me, side, ev) => {
+      if (c.alive(side).some((x) => x.divineShield)) return
+      for (const t of sel(c, me, side, ev)) t.divineShield = true
+    }
+  }
+  // If you control N minions with different types, gain your minions' highest Attack and Health
+  if ((m = /^if you control (\d+) minions with different types, gain (double )?your minions' highest attack and health$/i.exec(s))) {
+    const n = Number(m[1])
+    const k = m[2] ? 2 : 1
+    return (c, me, side) => {
+      const others = c.alive(side).filter((x) => x !== me)
+      if (oneOfEachType(c, others).length < n) return
+      c.buff(me, Math.max(...others.map((x) => x.atk)) * k, Math.max(...others.map((x) => x.hp)) * k)
+    }
+  }
+  // Gain the Attack of your left-most minion and the Health of your right-most minion
+  if (/^gain the attack of your left-most minion and the health of your right-most minion$/i.test(s)) {
+    return (c, me, side) => {
+      const a = c.alive(side)
+      if (a.length) c.buff(me, a[0].atk, a[a.length - 1].hp)
+    }
+  }
+  // Your left-most minion immediately attacks the enemy minion that killed this
+  if (/^your left-most minion immediately attacks the enemy minion that killed this$/i.test(s)) {
+    return (c, me, side) => {
+      const l = c.alive(side)[0]
+      if (l && me.killedBy && !c.isDead(me.killedBy)) c.singleAttack(side, l, me.killedBy)
+    }
+  }
+  // For each of your minion types gain +A/+H, Windfury, Reborn, or Taunt (Mantid Queen)
+  if ((m = /^for each of your minion types gain \+(\d+)\/\+(\d+), windfury, reborn, or taunt$/i.exec(s))) {
+    const atk = Number(m[1])
+    const hp = Number(m[2])
+    return (c, me, side) => {
+      for (const _ of oneOfEachType(c, c.alive(side).filter((x) => x !== me))) {
+        const r = Math.floor(c.rng() * 4)
+        if (r === 0) c.buff(me, atk, hp)
+        else setKeyword(me, ['windfury', 'reborn', 'taunt'][r - 1], true)
+      }
+    }
+  }
+  // Summon an A/H <Name> to attack the target first | Summon a <Name> with this minion's Attack to attack the target first
+  if ((m = /^summon an? (?:(\d+)\/(\d+) )?(.+?)(?: with this minion's attack)? to attack the target first$/i.exec(s))) {
+    const atk = m[1] ? Number(m[1]) : undefined
+    const hp = m[2] ? Number(m[2]) : undefined
+    const card = cards.bgMinionsNamed(m[3]).find((x) => !x.normalId)
+    const withAtk = /with this minion's attack/i.test(s)
+    return (c, me, side, ev) => {
+      if (!ev.target || c.isDead(ev.target)) return
+      const tok = c.makeMinion({ card, name: m![3], atk: withAtk ? me.atk : atk, hp })
+      const placed = c.summon(side, tok, side.minions.indexOf(me) + 1)
+      if (placed) c.singleAttack(side, placed, ev.target)
+    }
+  }
+  // This casts Deep Blues for +A/+H on it
+  if ((m = /^this casts .+? for \+(\d+)\/\+(\d+) on it$/i.exec(s))) {
+    const atk = Number(m[1])
+    const hp = Number(m[2])
+    return (c, _me, _side, ev) => ev.other && c.buff(ev.other, atk, hp)
+  }
+  // Magnetize a random (Magnetic) Volumizer to this / another friendly Mech. Volumizers scale over the
+  // game and the log doesn't say how far: a printed one (approximated in compileFx).
+  if ((m = /^magnetize a random (?:magnetic )?volumizer to (this|another friendly mech|(\d+|two) other friendly mechs)$/i.exec(s))) {
+    const self = m[1].toLowerCase() === 'this'
+    const n = m[2] ? num(m[2]) : 1
+    return (c, me, side) => {
+      const targets = self ? [me] : c.pickN(c.alive(side).filter((x) => x !== me && hasTribe(x, 'MECHANICAL')), n)
+      for (const t of targets) {
+        const [atk, hp] = c.pick([[3, 1], [1, 3], [3, 3]])!
+        c.buff(t, atk, hp)
+      }
+    }
+  }
+  // Summon a Golem with double this minion's stats | with stats equal to this minion's Blood Gems
+  if ((m = /^summon (an?|\d+|two) (.+?) with (double this minion's stats|stats equal to this minion's blood gems)$/i.exec(s))) {
+    const count = /^an?$/i.test(m[1]) ? 1 : num(m[1])
+    const name = m[2].replace(/s$/, '')
+    const double = m[3].toLowerCase().startsWith('double')
+    const card = cards.bgMinionsNamed(name).find((x) => !x.normalId)
+    return (c, me, side, ev) => {
+      const printed = c.cards.get(me.cardId)
+      const atk = double ? me.atk * 2 : Math.max(0, me.atk - (printed?.attack ?? me.atk))
+      const hp = double ? me.maxHp * 2 : Math.max(0, me.maxHp - (printed?.health ?? me.maxHp))
+      if (atk + hp > 0) for (let i = 0; i < count; i++) c.summon(side, c.makeMinion({ card, name, atk, hp }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+    }
+  }
+  // Summon N A/H <Name>s with "<text>": the token's own card already has that text if we know it.
+  if ((m = /^summon (a|an|one|two|three|\d+) (\d+)\/(\d+) (.+?) with "(deathrattle: .+?)\.?"$/i.exec(s))) {
+    const count = num(m[1])
+    const atk = Number(m[2])
+    const hp = Number(m[3])
+    const name = m[4].replace(/s$/, '')
+    const card = cards.bgMinionsNamed(name).find((x) => !x.normalId && x.attack === atk)
+    const problems: string[] = []
+    const dr = card ? undefined : parseBody(m[5].replace(/^deathrattle: /i, '') + '.', cards, self, problems)
+    if (!problems.length)
+      return (c, me, side, ev) => {
+        for (let i = 0; i < count; i++) {
+          const tok = c.summon(side, c.makeMinion({ card, name, atk, hp }), (ev.pos ?? side.minions.indexOf(me) + 1) + i)
+          if (tok && dr) (tok.grantedDeathrattles ??= []).push(dr)
+        }
+      }
+  }
+  // Summon a copy of a minion from your teammate's warband (Duos); "Set its Health to 1" follows.
+  if ((m = /^summon (?:a copy of a minion|copies of (\d+|two) minions) from your teammate's warband$/i.exec(s))) {
+    const n = m[1] ? num(m[1]) : 1
+    return (c, me, side, ev) => {
+      c.batch = []
+      let pos = ev.pos ?? side.minions.indexOf(me) + 1
+      for (const pick of c.pickN(side.teammate.filter((x) => c.cards.get(x.cardId)?.name !== me.name), n)) if (c.summon(side, c.minionFrom(pick), pos)) pos++
+    }
+  }
+  if (/^set (its|their) health to 1$/i.test(s)) {
+    return (c) => {
+      for (const t of c.batch) if (!c.isDead(t)) t.hp = t.maxHp = 1
+    }
+  }
+
   // Trigger this minion's Deathrattles (Jaws of Death)
   if (/^trigger this minion's deathrattles$/i.test(s)) return (c, me, side) => c.triggerDeathrattle(me, side, side.minions.indexOf(me) + 1)
   // Give this minion's Attack / max Health to another friendly minion (the Sacrifices)
+  if ((m = /^give (.+?) this minion's (maximum health|max health)$/i.exec(s)) && parseSelector(m[1])) {
+    const sel = parseSelector(m[1])!
+    return (c, me, side, ev) => {
+      for (const t of sel(c, me, side, ev)) c.buff(t, 0, me.maxHp)
+    }
+  }
+  s = s.replace(/^give this minion's maximum health to /i, "give this minion's max health to ")
   if ((m = /^give this minion's (attack|max health) to (.+)$/i.exec(s))) {
     const health = m[1].toLowerCase() !== 'attack'
     const sel = parseSelector(m[2])
@@ -539,11 +1080,13 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
     }
   }
   // Summon the (N) highest-Health minion(s) from your hand (and give it/them Divine Shield) (for this combat only)
-  if ((m = /^summon the (?:(\d+|two) )?highest-health minions? from your hand(?: and give (?:it|them) divine shield)?(?: for this combat(?: only)?)?$/i.exec(s))) {
+  if ((m = /^summon the (?:(\d+|two) )?highest-(health|attack) (\w+?)s? from your hand(?: and give (?:it|them) divine shield)?(?: for this combat(?: only)?)?$/i.exec(s)) && (m[3].toLowerCase() === 'minion' || tribeOf(m[3]))) {
     const n = m[1] ? num(m[1]) : 1
     const shield = /divine shield/i.test(s)
+    const by = m[2].toLowerCase() === 'attack' ? 'atk' : 'hp'
+    const tribe = m[3].toLowerCase() === 'minion' ? undefined : tribeOf(m[3])
     return (c, me, side, ev) => {
-      const best = [...side.hand].sort((a, b) => b.hp - a.hp).slice(0, n)
+      const best = side.hand.filter((x) => !tribe || hasTribe(x, tribe)).sort((a, b) => b[by] - a[by]).slice(0, n)
       let pos = ev.pos ?? side.minions.indexOf(me) + 1
       for (const h of best) {
         const placed = c.summon(side, c.minionCopy(h), pos++)
@@ -635,11 +1178,19 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
   }
 
   // Blood Gems: +1/+1 each (ignores game-long Blood Gem upgrades we can't see).
+  if ((m = /^(?:this )?plays? (a|\d+) (?:permanent )?blood gems? on (them|adjacent minions)$/i.exec(s))) {
+    const n = num(m[1])
+    const sel = parseSelector(m[2].toLowerCase())!
+    return (c, me, side, ev) => {
+      const gem = bloodGem(c, side)
+      for (const t of sel(c, me, side, ev)) c.buff(t, n * gem.atk, n * gem.hp)
+    }
+  }
   if ((m = /^(?:this )?plays? (a|\d+) (?:permanent )?blood gems? on (itself|it|all your other minions|all your (?!other)(\w+)|a different friendly minion)$/i.exec(s))) {
     const n = num(m[1])
     const who = m[2].toLowerCase()
-    const tribe = m[3] ? tribeOf(m[3]) : undefined
-    if (m[3] && !tribe) return undefined
+    const tribe = m[3] && m[3].toLowerCase() !== 'minions' ? tribeOf(m[3]) : undefined
+    if (m[3] && m[3].toLowerCase() !== 'minions' && !tribe) return undefined
     return (c, me, side, ev) => {
       const targets =
         who === 'itself'
@@ -650,10 +1201,11 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
               : []
             : who === 'all your other minions'
               ? c.alive(side).filter((x) => x !== me)
-              : tribe
-                ? c.alive(side).filter((x) => hasTribe(x, tribe))
+              : m![3]
+                ? c.alive(side).filter((x) => !tribe || hasTribe(x, tribe))
                 : [c.pick(c.alive(side).filter((x) => x !== me))].filter((x): x is Minion => !!x)
-      for (const t of targets) c.buff(t, n * side.bloodGem.atk, n * side.bloodGem.hp)
+      const gem = bloodGem(c, side)
+      for (const t of targets) c.buff(t, n * gem.atk, n * gem.hp)
     }
   }
 
@@ -663,8 +1215,8 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
     const atk = Number(m[2])
     const hp = Number(m[3] ?? 0)
     const tribe = tribeOf(word)
-    const name = tribe ? undefined : cards.bgMinionsNamed(word.replace(/s$/, ''))[0]?.name
-    if (!tribe && !name) return undefined
+    // A name with no minion card of its own (Whelp tokens) still names minions.
+    const name = tribe ? undefined : cards.bgMinionsNamed(word.replace(/s$/, ''))[0]?.name ?? word.replace(/s$/, '')
     return (c, _me, side) => {
       if (tribe) {
         const b = side.tribeBonus.get(tribe) ?? { atk: 0, hp: 0 }
@@ -737,8 +1289,12 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
     const spell = castSpell(m[1], cards)
     if (!spell) return undefined
     const times = m[3] ? Number(m[3]) : 1
+    const on = m[2] ? parseSelector(m[2]) : undefined
     return (c, me, side, ev) => {
-      for (let i = 0; i < times; i++) spell(c, me, side, ev)
+      // Maelstrom Emergent / Balinda: spells cast in combat cast extra times.
+      const extra = c.alive(side).reduce((n, f) => n + (f.fx.spellExtra ?? 0), 0)
+      const targets = on ? on(c, me, side, ev) : [undefined]
+      for (const t of targets) for (let i = 0; i < times * (1 + extra); i++) spell(c, me, side, t ? { ...ev, other: t } : ev)
     }
   }
   if ((m = /^(double|triple) its attack$/i.exec(s))) {
@@ -754,6 +1310,12 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
 
 /** Spells whose text doesn't fit the normal templates. */
 const SPELL_MANUAL: Record<string, Effect | 'ignore'> = {
+  // Give a minion +1/+1 twice. If it's a Naga, repeat this. (Cast on a minion: ev.other.)
+  'shifting tide': (c, me, _side, ev) => {
+    const t = ev.other ?? me
+    const n = hasTribe(t, 'NAGA') ? 4 : 2
+    c.buff(t, n, n)
+  },
   // Give your minions +3/+2. Repeat for your Dragons. Repeat for your minions with Divine Shield.
   'mighty dragonbreath': (c, _me, side) => {
     for (const t of c.alive(side)) {
@@ -798,7 +1360,7 @@ function parseBody(body: string, cards: CardSource, self: CardInfo | undefined, 
 
 // ---------------------------------------------------------------- compile
 
-const HEADER_RE = /((?:Battlecry, |Battlecry and )?(?:Deathrattle, and Rally|Deathrattle|Start of Combat|Rally)|Battlecry|(?:Deathrattle and )?Avenge \((\d+)\)|Activate \(\d+\)|Spellcraft)\s*:|(Choose One) -/g
+const HEADER_RE = /((?:Battlecry, |Battlecry and )?(?:Deathrattle,? and Rally|Deathrattle|Start of Combat|Rally)|Battlecry|(?:Deathrattle and )?Avenge \((\d+)\)(?: and Deathrattle)?|Activate(?: \(\d+\))?|Spellcraft)\s*:|(Choose One) -/g
 
 /** Wrap effects so they run at most `limit` times per minion per combat ("Rally: ... (2 times per combat.)"). */
 function limited(effects: Effect[], limit: number | undefined): Effect[] {
@@ -824,6 +1386,7 @@ function perCombatLimit(text: string): number | undefined {
 /** Subject phrases for friendly triggers: "a friendly Beast", "another friendly Taunt minion", "a friendly Deathrattle minion"... */
 function parseSubject(phrase: string): Pick<Trigger, 'tribe' | 'needTaunt' | 'needDeathrattle' | 'excludeSelf'> | undefined {
   const m = /^(a|another|a different) friendly (taunt minion|deathrattle minion|minion with taunt|minion|\w+)$/i.exec(phrase.trim())
+  if (!m && /^a minion$/i.test(phrase.trim())) return undefined
   if (!m) return undefined
   const what = m[2].toLowerCase()
   const out: Pick<Trigger, 'tribe' | 'needTaunt' | 'needDeathrattle' | 'excludeSelf'> = { excludeSelf: m[1].toLowerCase() !== 'a' }
@@ -845,7 +1408,7 @@ function parseGenericTrigger(t: string, cards: CardSource, self: CardInfo | unde
   if ((m = /^(?:Whenever|After) this(?: minion)? (?:is attacked|takes damage), (.+)$/i.exec(t))) {
     trig = { on: /attacked/i.test(t.slice(0, 40)) ? 'attacked' : 'damaged', selfOnly: true }
     body = m[1]
-  } else if ((m = /^(?:Whenever|After) (.+?) (dies|is attacked|takes damage|kills an enemy|kills a minion)(?: in combat)?, (.+)$/i.exec(t))) {
+  } else if ((m = /^(?:Whenever|After|When) (.+?) (dies|is attacked|takes damage|kills an enemy|kills a minion)(?: in combat)?, (.+)$/i.exec(t))) {
     const subject = parseSubject(m[1])
     if (!subject) return false
     const ev = m[2].toLowerCase()
@@ -881,15 +1444,15 @@ function parseTriggerSentence(s: string, cards: CardSource, self: CardInfo | und
     fx.tauntWhileShielded = true
     return true
   }
-  if (/^Also damages the enemies next to whomever this attacks$/i.test(t)) {
+  if (/^Also damages the (enemies|minions) next to whomever (this|it) attacks$/i.test(t)) {
     fx.cleave = true
     return true
   }
-  if ((m = /^(?:Whenever|After) (another|a) friendly (\w+?) attacks, (.+)$/i.exec(t))) {
-    const tribe = m[2].toLowerCase() === 'minion' ? undefined : tribeOf(m[2])
+  if ((m = /^(?:Whenever|After) (another|a) friendly (rally minion|\w+?) attacks, (.+)$/i.exec(t))) {
     const rallyOnly = /^rally minion$/i.test(m[2])
+    const tribe = m[2].toLowerCase() === 'minion' || rallyOnly ? undefined : tribeOf(m[2])
     const effects = parseBody(m[3] + '.', cards, self, problems)
-    ;(fx.friendlyAttack ??= []).push({ tribe, excludeSelf: m[1].toLowerCase() === 'another', rallyOnly, effects })
+    ;(fx.friendlyAttack ??= []).push({ tribe, excludeSelf: m[1].toLowerCase() === 'another', rallyOnly, limit, effects })
     return true
   }
   if ((m = /^After (another|a) friendly (\w+?) deals damage, (.+)$/i.exec(t))) {
@@ -898,8 +1461,142 @@ function parseTriggerSentence(s: string, cards: CardSource, self: CardInfo | und
     ;(fx.onFriendlyDamage ??= []).push({ tribe, excludeSelf: m[1].toLowerCase() === 'another', effects })
     return true
   }
-  if ((m = /^Whenever a friendly minion gains Attack, (.+)$/i.exec(t))) {
-    ;(fx.onGainStats ??= []).push({ needAtk: true, effects: parseBody(m[1] + '.', cards, self, problems) })
+  if ((m = /^(?:Whenever|After) (a|another|a different) friendly (\w+) gains (Attack|stats)(?: during combat)?, (.+)$/i.exec(t)) && (m[2].toLowerCase() === 'minion' || tribeOf(m[2]))) {
+    const tribe = m[2].toLowerCase() === 'minion' ? undefined : tribeOf(m[2])
+    const notSelf = m[1].toLowerCase() !== 'a' || !!tribe // a tribe trigger never fires off itself (Master of Realities)
+    const needAtk = m[3].toLowerCase() === 'attack'
+    const body = m[4]
+    const mirror = /^this also gains it( twice)?$/i.test(body)
+    const k = / twice$/i.test(body) ? 2 : 1
+    const effects = mirror ? [] : parseBody(body + '.', cards, self, problems)
+    ;(fx.onGainStats ??= []).push({
+      needAtk,
+      effects: [
+        (c, me, side, ev) => {
+          if (!ev.other || (notSelf && ev.other === me) || (tribe && !hasTribe(ev.other, tribe))) return
+          if (mirror) c.buff(me, (ev.atk ?? 0) * k, 0)
+          else for (const e of effects) e(c, me, side, ev)
+        },
+      ],
+    })
+    return true
+  }
+  if ((m = /^Whenever this gains (Attack|stats)(?: from other sources)?, (.+)$/i.exec(t))) {
+    const needAtk = m[1].toLowerCase() === 'attack'
+    const add = /^add \+(\d+)\/\+(\d+) to that amount/i.exec(m[2])
+    if (add) {
+      // 'Loc Prince: each gain is bigger. Guarded so its own extra doesn't trigger it again.
+      const atk = Number(add[1])
+      const hp = Number(add[2])
+      let busy = false
+      ;(fx.onGainStats ??= []).push({ selfOnly: true, effects: [(c, me) => { if (busy) return; busy = true; c.buff(me, atk, hp); busy = false }] })
+      return true
+    }
+    ;(fx.onGainStats ??= []).push({ selfOnly: true, needAtk, effects: parseBody(m[2] + '.', cards, self, problems) })
+    return true
+  }
+  if ((m = /^After another friendly (\w+) gains Health, give it (twice )?that much Attack$/i.exec(t)) && tribeOf(m[1])) {
+    const tribe = tribeOf(m[1])!
+    const k = m[2] ? 2 : 1
+    ;(fx.onGainStats ??= []).push({ effects: [(c, me, _side, ev) => ev.other && ev.other !== me && (ev.hp ?? 0) > 0 && hasTribe(ev.other, tribe) && c.buff(ev.other, ev.hp! * k, 0)] })
+    return true
+  }
+  if ((m = /^Whenever a different minion in your hand or board gains Health, this also gains (it|twice that amount)$/i.exec(t))) {
+    const k = m[1].toLowerCase() === 'it' ? 1 : 2
+    ;(fx.onGainStats ??= []).push({ effects: [(c, me, _side, ev) => ev.other && ev.other !== me && (ev.hp ?? 0) > 0 && c.buff(me, 0, ev.hp! * k)] })
+    return true
+  }
+  if ((m = /^Whenever your Amalgam gains stats, this gains them (too|twice)$/i.exec(t))) {
+    const k = m[1].toLowerCase() === 'twice' ? 2 : 1
+    ;(fx.onGainStats ??= []).push({ effects: [(c, me, _side, ev) => ev.other && ev.other !== me && /Amalgam/.test(ev.other.name) && c.buff(me, (ev.atk ?? 0) * k, (ev.hp ?? 0) * k)] })
+    return true
+  }
+  if ((m = /^Whenever a minion dies, (.+)$/i.exec(t))) {
+    ;(fx.onAnyDeath ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
+    return true
+  }
+  if (/^After this minion attacks, destroy it$/i.test(t)) {
+    ;(fx.afterAttack ??= []).push((_c, me) => void (me.destroyed = true))
+    return true
+  }
+  if ((m = /^Whenever this attacks, (.+)$/i.exec(t))) {
+    ;(fx.rally ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
+    return true
+  }
+  if ((m = /^(?:If there's no space|Whenever you would summon a minion that doesn't fit in your warband), (.+)$/i.exec(t))) {
+    ;(fx.onSummonFail ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
+    return true
+  }
+  if (/^When this would take damage, deal it to a random enemy minion instead$/i.test(t)) {
+    fx.redirectDamage = true
+    return true
+  }
+  if ((m = /^This (?:minion )?always attacks (the enemy minion with the lowest Attack|an enemy minion that it can kill)/i.exec(t))) {
+    fx.targeting = /lowest/i.test(m[1]) ? 'lowestAtk' : 'canKill'
+    return true
+  }
+  if ((m = /^This minion's Divine Shield takes (\d+) hits to break$/i.exec(t))) {
+    fx.shieldHits = Number(m[1])
+    return true
+  }
+  if ((m = /^Your first (?:(\d+|two) )?minions? that attacks? ha(?:s|ve) "Immune while Attacking" for one attack only$/i.exec(unmaskQuotes(t)))) {
+    fx.immuneFirstAttacks = m[1] ? num(m[1]) : 1
+    return true
+  }
+  if ((m = /^Your cards that summon minions summon (twice|three times) as many$/i.exec(t))) {
+    fx.summonExtra = m[1].toLowerCase() === 'twice' ? 1 : 2
+    return true
+  }
+  if ((m = /^After you summon a different minion in combat, summon (an extra copy|(\d+|two) extra copies) of it$/i.exec(t))) {
+    fx.copySummons = m[2] ? num(m[2]) : 1
+    return true
+  }
+  if ((m = /^Your spells (?:that target friendly minions )?cast (an extra time|twice|three times|(\d+) extra times)(?: in combat)?$/i.exec(t))) {
+    fx.spellExtra = m[2] ? Number(m[2]) : m[1].toLowerCase() === 'three times' ? 2 : 1
+    if (/target friendly/i.test(t)) (fx.approximated ??= []).push('doubles every spell cast in combat')
+    return true
+  }
+  if ((m = /^Your Blood Gems give (an extra \+(\d+)\/\+(\d+)|(twice|three times) their stats during combat)$/i.exec(t))) {
+    if (m[2]) fx.gemBonus = { atk: Number(m[2]), hp: Number(m[3]) }
+    else fx.gemMultiplier = m[4].toLowerCase() === 'twice' ? 2 : 3
+    return true
+  }
+  if ((m = /^Your minions with Divine Shield have \+(\d+) Attack$/i.exec(t))) {
+    // An aura: the Attack is in the log; a minion that loses its shield in combat loses it again.
+    const atk = Number(m[1])
+    ;(fx.onShieldLost ??= []).push((c, _me, _side, ev) => ev.other && c.buff(ev.other, -atk, 0))
+    ;(fx.approximated ??= []).push('kept if this dies first')
+    return true
+  }
+  if ((m = /^Your (\w+?)s? have \+(\d+)\/\+(\d+)$/i.exec(t)) && tribeOf(m[1])) {
+    // An aura: in the log already, and given to minions summoned in combat.
+    const tribe = tribeOf(m[1])!
+    fx.summonAura = { pred: (x) => hasTribe(x, tribe), atk: Number(m[2]), hp: Number(m[3]) }
+    return true
+  }
+  if ((m = /^Whenever a friendly minion loses a Bonus Keyword in combat, (.+)$/i.exec(t))) {
+    ;(fx.onShieldLost ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
+    ;(fx.approximated ??= []).push('counts lost Divine Shields only')
+    return true
+  }
+  if ((m = /^After a friendly (\w+) dies, summon this from your hand for this combat only$/i.exec(t))) {
+    fx.summonSelfFromHand = { tribe: m[1].toLowerCase() === 'minion' ? undefined : tribeOf(m[1]) }
+    return true
+  }
+  if (/^After this kills a minion and survives, gain its maximum stats$/i.test(t)) {
+    ;(fx.onKill ??= []).push((c, me, _side, ev) => ev.target && !c.isDead(me) && c.buff(me, ev.target.atk, ev.target.maxHp))
+    return true
+  }
+  if ((m = /^The first (time|(\d+|two) times) this survives damage each combat, gain Divine Shield$/i.exec(t))) {
+    ;(fx.triggers ??= []).push({ on: 'damaged', selfOnly: true, limit: m[2] ? num(m[2]) : 1, effects: [(c, me) => void (!c.isDead(me) && (me.divineShield = true))] })
+    return true
+  }
+  if (/^Deity$/i.test(t)) {
+    fx.deity = true
+    return true
+  }
+  if (/^This is Reborn with full (Attack|Attack and Health|stats and Bonus Keywords)$/i.test(t)) {
+    fx.rebornFull = /^This is Reborn with full Attack$/i.test(t) ? 'atk' : true
     return true
   }
   if ((m = /^After this gains stats, also give (twice )?the stats to the (left-most|two left-most) minions? in your hand$/i.exec(t))) {
@@ -923,12 +1620,16 @@ function parseTriggerSentence(s: string, cards: CardSource, self: CardInfo | und
     ;(fx.onKill ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
     return true
   }
+  if ((m = /^When you have space in combat, (.+)$/i.exec(t))) {
+    ;(fx.whenSpace ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
+    return true
+  }
   if ((m = /^After a friendly minion is Reborn, (.+)$/i.exec(t))) {
     fx.onFriendlyReborn = parseBody(m[1] + '.', cards, self, problems)
     return true
   }
   if (parseGenericTrigger(t, cards, self, fx, problems, limit)) return true
-  if ((m = /^(?:After|Whenever) you summon an? (\w+)(?: in combat)?, (.+)$/i.exec(t))) {
+  if ((m = /^(?:After|Whenever) you summon an? (\w+)(?: in combat| during combat)?, (.+)$/i.exec(t))) {
     const tribe = tribeOf(m[1])
     const inner = parseBody(m[2].replace(/ and improve this permanently$/i, '') + '.', cards, self, problems)
     fx.onSummon = [(c, me, side, ev) => ev.other && (!tribe || hasTribe(ev.other, tribe)) && inner.forEach((e) => e(c, me, side, ev))]
@@ -977,6 +1678,12 @@ const SHOP_TRIGGER = new RegExp(
       'In \\w+ turns',
       'Your \\w+ give an extra', // tavern buffs
       'Improves after', // the improved stats are already in the log; see approximated
+      'Your flightpaths', "When you 'Devour'", "'\\w[^']*' (also|chooses|replaces)", 'You only need', 'After you remove a minion with',
+      'At the start of every', 'After this is in your hand', 'After \\d+ friendly minions die while this is in your hand',
+      'Whenever you (get|add)', 'Give Golden ones', 'Your Magnetizations', 'Your \\w+ and \\w+ give an extra',
+      'After this awakens', // a Deity waking up happens between fights
+      'Then improve this', 'Get (a random|\\d+|two) Spellcraft spells?', 'This casts (a copy of it|copies of them)', 'Whenever a spell is cast on this',
+      '\\d+$', '$',
     ].join('|') +
     ')',
   'i',
@@ -994,7 +1701,8 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
     manual(fx, card, cards)
     return fx
   }
-  const text = cleanText(card.text)
+  // "Summon a 1/1 Pirate. It attacks immediately." is one action: the summoned minion attacks.
+  const text = maskQuotes(cleanText(card.text)).replace(/\. (It attacks|They attack) immediately\./gi, ' that attack immediately.')
   if (!text) return fx
 
   // Split into "Header: body" sections; anything before the first header is keyword/trigger text.
@@ -1014,7 +1722,7 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
   // Parenthesised notes are counters and reminders ("(3 left!)", "(Improves each turn!)"); limits are read separately.
   for (const raw of leading.replace(/\([^)]*\)/g, ' ').split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean)) {
     const sentence = raw.replace(KEYWORDS, '').trim()
-    if (!sentence) continue
+    if (!/\w/.test(sentence)) continue
     if (parseTriggerSentence(sentence, cards, card, fx, problems, perCombatLimit(text))) {
       inShopText = false
       continue
@@ -1048,7 +1756,11 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
   // Best guesses the text forces on us (the user's choice: model them, but say so).
   if (!problems.length) {
     if (/Blood Gem/i.test(text) && /plays? .*Blood Gem|Blood Gems give/i.test(text)) (fx.approximated ??= []).push('Blood Gems count as +1/+1')
-    if (/Improves after/i.test(text)) (fx.approximated ??= []).push('uses its printed numbers')
+    if (/Improves after|Improves when|\(Improved by/i.test(text)) (fx.approximated ??= []).push('uses its printed numbers')
+    if (/Trigger (your right-most|the) Battlecry/i.test(text)) (fx.approximated ??= []).push('Battlecries aren’t simulated')
+    if (/Volumizer/i.test(text)) (fx.approximated ??= []).push('a Volumizer at printed stats')
+    if (/random Legendary/i.test(text)) (fx.approximated ??= []).push('Legendary: a Tier 5+ minion')
+    if (/Blood Gems\b/i.test(text) && /this minion's Blood Gems/i.test(text)) (fx.approximated ??= []).push('Blood Gems counted from its bonus stats')
   }
   return fx
 }
@@ -1428,6 +2140,89 @@ const MANUAL: Record<string, Manual> = {
       },
     ]
     fx.approximated = ['uses this opponent’s warband']
+  },
+  // Festergut (Putricide's buddy) – same as Timewarped Festergut.
+  BG25_HERO_100_Buddy: (fx, card) => {
+    fx.deathrattle = [(c, me, side, ev) => summonRandom(c, me, side, ev, 'UNDEAD', g(card))]
+    fx.approximated = ['the Creation is a random Undead']
+  },
+  // Spirit Raptor – Deathrattle: Call upon those Elements (golden: twice). Which Elements it remembers
+  // isn't logged: one of the four Invocations at random.
+  BG22_HERO_001_Buddy: (fx, card) => {
+    fx.deathrattle = [
+      (c, me, side) => {
+        for (let k = 0; k < g(card); k++) {
+          const r = Math.floor(c.rng() * 4)
+          const mine = c.alive(side)
+          if (r === 0) for (const t of c.pickN(mine, 4)) (t.grantedDeathrattles ??= []).push([(cc, tm, sd, ev) => void cc.summon(sd, cc.makeMinion({ name: 'Elemental', atk: 1, hp: 1, tribes: ['ELEMENTAL'] }), ev.pos ?? sd.minions.indexOf(tm) + 1)])
+          else if (r === 1 && mine[0]) c.buff(mine[0], mine[0].atk, 0)
+          else if (r === 2 && mine.length) {
+            const t = mine[mine.length - 1]
+            t.divineShield = true
+            t.taunt = true
+          } else if (r === 3) for (const t of c.pickN(c.alive(c.other(side)), 5)) c.damage(t, 1, me)
+        }
+      },
+    ]
+    fx.approximated = ['the Elements are random']
+  },
+  // Audacious Anchor – Start of Combat: Battle the nearest enemy minion to the death!
+  BG28_904: (fx) => {
+    fx.startOfCombat = [
+      (c, me, side) => {
+        const enemy = c.alive(c.other(side))
+        const foe = enemy[Math.min(side.minions.indexOf(me), enemy.length - 1)]
+        for (let k = 0; foe && k < 50 && !c.isDead(me) && !c.isDead(foe); k++) {
+          c.damage(foe, me.atk, me)
+          c.damage(me, foe.atk, foe)
+        }
+        c.resolveDeaths(side)
+      },
+    ]
+  },
+  // Interrogator Whitemane – Start of Combat: Give an enemy minion from Tier 5 or higher Taunt. It takes double damage this combat.
+  BG24_704: (fx) => {
+    fx.startOfCombat = [
+      (c, _me, side) => {
+        const t = c.pick(c.alive(c.other(side)).filter((x) => x.tier >= 5))
+        if (!t) return
+        t.taunt = true
+        t.doubleDamage = true
+      },
+    ]
+  },
+  // Adaptable Barricade – Taunt. Whenever this is attacked, it shifts its stats to survive with 1 Health (if possible).
+  BG27_022: (fx) => {
+    fx.triggers = [
+      {
+        on: 'attacked',
+        selfOnly: true,
+        effects: [
+          (_c, me, _side, ev) => {
+            const hit = ev.target?.atk ?? 0
+            if (me.divineShield || hit < me.hp) return
+            const total = me.atk + me.hp
+            if (total < hit + 1) return
+            me.hp = hit + 1
+            me.maxHp = Math.max(me.maxHp, me.hp)
+            me.atk = total - me.hp
+          },
+        ],
+      },
+    ]
+  },
+  // Omega Buster – Deathrattle: Summon six 1/1 Microbots. For each that doesn't fit, give your Mechs +1/+1 (golden: +2/+2 and 2/2s).
+  BG21_025: (fx, card) => {
+    fx.deathrattle = [
+      (c, me, side, ev) => {
+        const bot = c.cards.bgMinionsNamed('Microbot').find((x) => (card.normalId ? !!x.normalId : !x.normalId))
+        let pos = ev.pos ?? side.minions.indexOf(me) + 1
+        let spare = 0
+        for (let k = 0; k < 6; k++) if (c.summon(side, c.makeMinion({ card: bot, name: 'Microbot', atk: g(card), hp: g(card), tribes: ['MECHANICAL'] }), pos)) pos++
+        else spare++
+        for (const t of c.alive(side)) if (hasTribe(t, 'MECHANICAL')) c.buff(t, spare * g(card), spare * g(card))
+      },
+    ]
   },
 }
 

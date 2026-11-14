@@ -27,8 +27,8 @@ describe('shop-only text is not "Not modelled"', () => {
 
 describe('unrecognised combat text is reported', () => {
   it('even without a combat keyword in it', () => {
-    // Real text (Balinda Stonehearth). Spells cast in combat would be doubled.
-    expect(unsupported('[x]Your spells that target\nfriendly minions cast\ntwice.')).toEqual(['Your spells that target friendly minions cast twice.'])
+    // Made up: every real card is modelled now, and the point is that nothing unknown hides.
+    expect(unsupported('Your Pirates sing sea shanties.')).toEqual(['Your Pirates sing sea shanties.'])
   })
 })
 
