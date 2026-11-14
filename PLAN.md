@@ -389,7 +389,7 @@ told, and repeated reads hold memory flat (vs the 1.37GB loop). Then live shop
 phases in Hearthstone's **Fullscreen** and **windowed** modes: boxes as before,
 no black frames, and the main process's CPU during shops.
 
-### M13 — Tribe OCR on the stream; drop thumbnail capture — built, awaiting live check
+### M13 — Tribe OCR on the stream; drop thumbnail capture ✅ done
 
 `readLobbyTribes` reads a 1440-high frame from the stream and crops the banner
 from it (`nativeImage.createFromBitmap` → `crop` → `toPNG`); the tribe read

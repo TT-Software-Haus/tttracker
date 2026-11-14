@@ -330,15 +330,20 @@ export class Tracker extends EventEmitter {
       }
       // Stop once the hero is locked in: the banner has gone, and anything we
       // read after that is some other screen.
-      if (attempts >= TRIBE_READ_ATTEMPTS || this.heroPicked) return
+      if (attempts >= TRIBE_READ_ATTEMPTS || this.heroPicked) {
+        stopCapture()
+        return
+      }
       this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
     }
     this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
   }
 
   private stopTribeRead() {
-    if (this.tribeTimer) clearTimeout(this.tribeTimer)
+    if (!this.tribeTimer) return
+    clearTimeout(this.tribeTimer)
     this.tribeTimer = undefined
+    stopCapture()
   }
 
 

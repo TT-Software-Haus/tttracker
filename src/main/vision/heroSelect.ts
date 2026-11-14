@@ -1,4 +1,4 @@
-import { desktopCapturer } from 'electron'
+import { nativeImage } from 'electron'
 import { PSM, createWorker, type Worker } from 'tesseract.js'
 import { parseTribeBanner } from './tribeNames'
 import { findBannerRect, type Rect } from './bannerRect'
@@ -53,32 +53,17 @@ export async function stopVision() {
 }
 
 /**
- * The Hearthstone window, or undefined if it isn't running or is minimised.
- *
- * getSources() renders a thumbnail of *every* open window at this size and
- * there's no asking for just one. Measured with 24 windows open: 227MB per
- * call at 2560x1440, 57MB at 1280x720. So callers ask for the smallest size
- * that does the job.
- */
-async function captureGameWindow(size: { width: number; height: number }) {
-  const sources = await desktopCapturer.getSources({ types: ['window'], thumbnailSize: size })
-  const hs = sources.find((s) => s.name === 'Hearthstone')
-  return hs && !hs.thumbnail.isEmpty() ? hs.thumbnail : undefined
-}
-
-/**
  * The lobby's minion types, read off the hero-select screen. Returns [] if the
  * game can't be captured or the banner isn't up — callers must treat that as
  * "don't know" rather than "no tribes", and try again.
  */
 export async function readLobbyTribes(cacheDir: string): Promise<string[]> {
-  // Full size: tesseract needs crisp text, and this only runs during hero select.
-  const shot = await captureGameWindow({ width: 2560, height: 1440 })
-  if (!shot) return []
-  const { width, height } = shot.getSize()
-  const rect = findBannerRect(shot.toBitmap(), width, height)
+  // 1440 high: tesseract needs crisp text. The tavern reads at 720.
+  const frame = await captureFrame(1440)
+  if (!frame) return []
+  const rect = findBannerRect(frame.bgra, frame.width, frame.height)
   if (!rect) return []
-  const crop = shot.crop(rect)
+  const crop = nativeImage.createFromBitmap(frame.bgra, { width: frame.width, height: frame.height }).crop(rect)
   if (crop.isEmpty()) return []
   return readTribes(cacheDir, crop.toPNG())
 }
