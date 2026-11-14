@@ -94,11 +94,24 @@ function OddsOverlay({ snap }: { snap: BgSnapshot }) {
 function useClickZone() {
   const inside = useRef(false)
   const set = (on: boolean) => {
+    if (inside.current === on) return
     inside.current = on
-    void window.api.setInteractive(on)
+    zonesEntered(on ? 1 : -1)
   }
-  useEffect(() => () => void (inside.current && window.api.setInteractive(false)), [])
+  useEffect(() => () => void (inside.current && zonesEntered(-1)), [])
   return { onMouseEnter: () => set(true), onMouseLeave: () => set(false) }
+}
+
+/**
+ * Zones nest (the build sidebar's "Change" button sits inside the sidebar,
+ * itself a zone so it can scroll), so count them: leaving the button while
+ * still over the sidebar must keep the overlay taking the mouse.
+ */
+let zonesInside = 0
+function zonesEntered(delta: number) {
+  const was = zonesInside > 0
+  zonesInside = Math.max(0, zonesInside + delta)
+  if (zonesInside > 0 !== was) void window.api.setInteractive(zonesInside > 0)
 }
 
 function OvButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {
@@ -155,6 +168,7 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const byDbf = useMemo(() => new Map(pool.map((c) => [c.dbfId, c])), [pool])
   const [picking, setPicking] = useState(false)
   const [tip, setTip] = useState<{ card: CardInfo; style: CSSProperties }>()
+  const zone = useClickZone()
   if (!build) return null
   if (picking) return <BuildPicker snap={snap} onClose={() => setPicking(false)} />
   // In hand counts as bought: it's yours, just not played yet. In combat the
@@ -186,7 +200,9 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
     </div>
   )
   return (
-    <div className="ov-card ov-build" onScroll={() => setTip(undefined)}>
+    // A click zone so it scrolls: a click-through window gets forwarded mouse
+    // moves but never the wheel. Over the sidebar, clicks are the sidebar's.
+    <div className="ov-card ov-build" onScroll={() => setTip(undefined)} {...zone}>
       <div className="ov-head">
         <b>{build.name}</b>
         <span className="muted small">
