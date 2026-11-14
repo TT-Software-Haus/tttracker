@@ -4,3 +4,5 @@ dist/
 *.log
 eng.traineddata
 tmp-*
+native/capture/target/
+native/capture.node

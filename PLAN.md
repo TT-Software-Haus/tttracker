@@ -554,7 +554,7 @@ scales it down to the requested height on the CPU (box filter), and returns it.
 
 ## Milestones
 
-### M16 — Rust module skeleton, wired into the build
+### M16 — Rust module skeleton, wired into the build ✅ done
 
 `native/capture/` (a cdylib crate) exporting a trivial function, the cargo step
 in the npm scripts, a copy to a fixed path, a loader in main that warns once on

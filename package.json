@@ -5,22 +5,27 @@
   "main": "out/main/index.js",
   "private": true,
   "scripts": {
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "native": "cargo build --release --manifest-path native/capture/Cargo.toml && node -e \"require('fs').copyFileSync('native/capture/target/release/capture.dll', 'native/capture.node')\"",
+    "dev": "npm run native && electron-vite dev",
+    "build": "npm run native && electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder --win"
+    "dist": "npm run build && electron-builder --win"
   },
   "build": {
     "appId": "dev.hearthtracker.app",
     "productName": "Hearth Tracker",
     "files": [
-      "out/**/*"
+      "out/**/*",
+      "native/capture.node"
     ],
     "win": {
       "target": "nsis"
-    }
+    },
+    "asarUnpack": [
+      "native/capture.node"
+    ]
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
