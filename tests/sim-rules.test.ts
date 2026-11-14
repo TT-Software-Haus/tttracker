@@ -195,3 +195,22 @@ describe('trinkets', () => {
     expect([r.unsupported, r.approximated]).toEqual([[], []])
   })
 })
+
+// Quest rewards (and anomalies) are passive cards like trinkets, on the same path.
+describe('quest rewards', () => {
+  it('Volatile Venom: minions die after they attack', () => {
+    const c = fight({ minions: [m(VAN, 8, 8), m(VAN, 8, 8)], heroTier: 4, trinkets: ['BG24_Reward_364'] })
+    c.singleAttack(c.sides[0], c.sides[0].minions[0])
+    expect(c.sides[0].minions).toHaveLength(1)
+  })
+
+  it('Stable Amalgamation: the Avenge summon waits for room', () => {
+    const six = Array.from({ length: 6 }, () => m(VAN, 1, 1))
+    const c = fight({ minions: [m('BG28_300', 1, 1), ...six], heroTier: 4, trinkets: ['BG28_Reward_518'] })
+    for (let i = 0; i < 7; i++) {
+      c.sides[0].minions[0].destroyed = true
+      c.resolveDeaths(c.sides[0])
+    }
+    expect(stats(c)).toContain('Amalgam 50/50')
+  })
+})

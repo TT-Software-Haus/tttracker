@@ -563,14 +563,20 @@ export class BgGame {
   }
 
   /**
-   * The trinkets fighting with a warband: BATTLEGROUND_TRINKET entities in play for its controller.
-   * Checked on real logs: both sides' are there during each fight. The "Lesser/Greater Trinket"
-   * cards are the empty slots.
+   * The passive cards fighting with a warband: its trinkets and quest rewards (in play for its
+   * controller; checked on real logs, both sides' trinkets are there during each fight; the
+   * "Lesser/Greater Trinket" cards are the empty slots), plus the lobby's anomaly, which applies to
+   * everyone. No anomaly has been seen in a local log yet, so that part is from the card type alone.
    */
   private trinketsOf(controller: number | undefined): string[] | undefined {
     if (controller === undefined) return undefined
     const ids = [...this.game.entities.values()]
-      .filter((e) => e.tags.CARDTYPE === 'BATTLEGROUND_TRINKET' && e.tags.ZONE === 'PLAY' && this.game.controllerOf(e) === controller && !/^BG30_Trinket_/.test(e.cardId))
+      .filter((e) => {
+        if (e.tags.ZONE !== 'PLAY') return false
+        if (e.tags.CARDTYPE === 'BATTLEGROUND_ANOMALY') return true
+        const own = e.tags.CARDTYPE === 'BATTLEGROUND_TRINKET' || e.tags.CARDTYPE === 'BATTLEGROUND_QUEST_REWARD'
+        return own && this.game.controllerOf(e) === controller && !/^BG30_Trinket_/.test(e.cardId)
+      })
       .map((e) => e.cardId)
     return ids.length ? ids : undefined
   }

@@ -67,6 +67,8 @@ export interface CardFx {
   onShieldLost?: Effect[]
   /** "After another friendly Demon deals damage, ..." */
   onFriendlyDamage?: FriendlyAttackTrigger[]
+  /** "After they attack, they die": after any friendly minion attacks (ev.other = it). */
+  afterFriendlyAttack?: Effect[]
   /** "When you have space in combat, ...": runs once, the first time the board has room. */
   whenSpace?: Effect[]
   /** Who this attacks: "the enemy minion with the lowest Attack", "an enemy minion it can kill". */
@@ -1068,6 +1070,15 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
   }
   // Battlecries don't run in combat (approximated in compileFx).
   if (/^trigger a friendly battlecry$/i.test(s)) return () => {}
+  // When you have space, <action>: now if there's room, otherwise as soon as there is.
+  if ((m = /^when you have space, (.+)$/i.exec(s))) {
+    const inner = parseActionOnce(m[1], cards, self)
+    if (inner && inner !== 'ignore')
+      return (c, me, side, ev) => {
+        if (c.alive(side).length < 7) inner(c, me, side, ev)
+        else side.pendingSpace.push(() => inner(c, me, side, {}))
+      }
+  }
 
   // Trigger this minion's Deathrattles (Jaws of Death)
   if (/^trigger this minion's deathrattles$/i.test(s)) return (c, me, side) => c.triggerDeathrattle(me, side, side.minions.indexOf(me) + 1)
@@ -1575,6 +1586,11 @@ function parseTriggerSentence(s: string, cards: CardSource, self: CardInfo | und
     ;(fx.onAnyDeath ??= []).push(...parseBody(m[1] + '.', cards, self, problems))
     return true
   }
+  if (/^After they attack, they die$/i.test(t)) {
+    // Volatile Venom: "Your minions have +7/+7. After they attack, they die."
+    ;(fx.afterFriendlyAttack ??= []).push((_c, _me, _side, ev) => void (ev.other && (ev.other.destroyed = true)))
+    return true
+  }
   if (/^After this minion attacks, destroy it$/i.test(t)) {
     ;(fx.afterAttack ??= []).push((_c, me) => void (me.destroyed = true))
     return true
@@ -1774,7 +1790,7 @@ const SHOP_TRIGGER = new RegExp(
       'After this awakens', // a Deity waking up happens between fights
       'Whenever you trigger a Battlecry', 'Your Choose One', 'Your \\w+ (permanently keep|that give stats|Choose One)', 'Your left and right-most \\w+ permanently keep',
       'After \\d+ friendly minions attack, replace', 'After you summon \\d+ minions, replace', 'After your Deity', 'Whenever a friendly \\w+ consumes',
-      'Whenever your team', 'Your (.+?) have \\+\\d+/\\+\\d+ this game',
+      'Whenever your team', 'At the start of the game', 'After another hero dies', 'Your (.+?) have \\+\\d+/\\+\\d+ this game',
       'Then improve this', 'Get (a random|\\d+|two) Spellcraft spells?', 'This casts (a copy of it|copies of them)', 'Whenever a spell is cast on this',
       '\\d+$', '$',
     ].join('|') +

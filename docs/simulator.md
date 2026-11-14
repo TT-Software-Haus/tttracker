@@ -210,6 +210,11 @@ alongside the hero power's: never on the board, but included by `watchers(side)`
 trigger loop (deaths, summons, Avenge, attacks, shields, stat gains, Reborn, "when you
 have space"), and its auras apply to summons.
 
+Quest rewards (`BATTLEGROUND_QUEST_REWARD`, the owner's) and the lobby's anomaly
+(`BATTLEGROUND_ANOMALY`, everyone's) go through the same path. Neither has been seen in
+play in a local log yet, so that part follows the card types; check it against the first
+real game that has one.
+
 ## Enchantments
 
 What a minion was given before the boards were captured (a Deathrattle from Murloc King or
@@ -249,7 +254,7 @@ npx tsx scripts/sim-coverage.ts cards.json                # tavern pool + Timewa
 npx tsx scripts/sim-coverage.ts cards.json --all          # every BG minion: tokens, rewards, rotated
 npx tsx scripts/sim-coverage.ts cards.json --hero-powers  # hero powers with combat text
 npx tsx scripts/sim-coverage.ts cards.json --enchantments # enchantments that give combat text
-npx tsx scripts/sim-coverage.ts cards.json --trinkets     # what trinkets do during combat
+npx tsx scripts/sim-coverage.ts cards.json --trinkets     # trinkets, quest rewards, anomalies
 ```
 
 Prints one line per card (and its golden version) whose text didn't compile, with the

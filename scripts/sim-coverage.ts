@@ -27,7 +27,9 @@ if (process.argv.includes('--hero-powers')) {
   }
   console.log(`\n${new Set(powers.map((p) => p.name)).size} hero powers checked; ${names.size} have unmodelled combat text.`)
 } else if (process.argv.includes('--trinkets')) {
-  const trinkets = raw.filter((c) => c.type === 'BATTLEGROUND_TRINKET' && c.set === 'BATTLEGROUNDS')
+  // Quest rewards and anomalies are passive cards too, and go through the same path.
+  const passive = ['BATTLEGROUND_TRINKET', 'BATTLEGROUND_QUEST_REWARD', 'BATTLEGROUND_ANOMALY']
+  const trinkets = raw.filter((c) => passive.includes(c.type ?? '') && c.set === 'BATTLEGROUNDS')
   let bad = 0
   for (const c of trinkets) {
     const fx = compileTrinket(c, db, true)
@@ -35,8 +37,7 @@ if (process.argv.includes('--hero-powers')) {
     bad++
     console.log(`${c.id.padEnd(24)} ${c.name}: ${fx.unsupported.join(' | ')}`)
   }
-  console.log(`
-${trinkets.length} trinkets checked; ${bad} have unmodelled combat text.`)
+  console.log(`\n${trinkets.length} trinkets, quest rewards and anomalies checked; ${bad} have unmodelled combat text.`)
 } else if (process.argv.includes('--enchantments')) {
   let n = 0
   let bad = 0

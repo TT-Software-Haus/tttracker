@@ -100,6 +100,8 @@ export interface Side {
   immuneAttacks: number
   /** The first minion summoned this combat (Twin Sky Lanterns). */
   firstSummon?: Minion
+  /** Effects waiting for room on the board ("Avenge (7): When you have space, summon ..."). */
+  pendingSpace: (() => void)[]
   /** What one Blood Gem gives. +1/+1 unless something in combat upgrades it; game-long upgrades aren't visible. */
   bloodGem: { atk: number; hp: number }
 }
@@ -213,6 +215,7 @@ export class Combat {
       immuneAttacks: 0,
       standIns: [],
       trinkets: input.trinkets ?? [],
+      pendingSpace: [],
     }
     for (const m of input.minions.slice(0, MAX_BOARD)) side.minions.push(this.fromInput(m))
     side.standIns = this.standInsFor(side)
@@ -806,6 +809,7 @@ export class Combat {
       if (pickAdj && excess > 0) this.damage(pickAdj, excess, attacker)
     }
     if (!this.isDead(attacker)) this.run(attacker.fx.afterAttack, attacker, side, { target })
+    for (const f of this.watchers(side)) if (!this.isDead(f) && f.fx.afterFriendlyAttack) this.run(f.fx.afterFriendlyAttack, f, side, { other: attacker, target })
     this.resolveDeaths(side)
   }
 
@@ -822,6 +826,7 @@ export class Combat {
       if (!batch.length) {
         // Board stable: room may have opened up for "summon from hand when you have space".
         for (const side of this.sides) if (side.pendingFromHand.length) this.fillFromHand(side)
+        for (const side of this.sides) while (side.pendingSpace.length && this.alive(side).length && this.alive(side).length < MAX_BOARD) side.pendingSpace.shift()!()
         for (const side of this.sides) {
           if (!side.standIns.some((f) => f.fx.whenSpace) && !side.minions.some((f) => f.fx.whenSpace)) continue
           for (const f of [...side.standIns, ...side.minions]) {
