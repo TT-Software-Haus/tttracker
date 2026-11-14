@@ -378,14 +378,16 @@ export class Tracker extends EventEmitter {
 
   private drain() {
     const end = performance.now() + SLICE_MS
+    let replayed = false
     while (this.lineQueue.length && performance.now() < end) {
       const job = this.lineQueue[0]
+      replayed ||= job.catchingUp
       this.ingest(job.lines.slice(job.at, job.at + SLICE_LINES), job.catchingUp)
       job.at += SLICE_LINES
       if (job.at >= job.lines.length) this.lineQueue.shift()
     }
     if (this.lineQueue.length) setImmediate(() => this.drain())
-    else if (!this.moreComing) mark('log caught up')
+    else if (replayed && !this.moreComing) mark('log caught up')
   }
 
   private ingest(lines: string[], catchingUp: boolean) {

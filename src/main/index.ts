@@ -226,6 +226,8 @@ async function updateHighlightWindow(snap: BgSnapshot) {
 }
 
 
+/** The click-through, focus and opacity last applied to each overlay. */
+const applied = new WeakMap<BrowserWindow, string>()
 function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
   const o = store.settings.overlay
   const inGame = snap.status === 'in-game' || snap.status === 'game-over'
@@ -247,10 +249,22 @@ function updateOverlays(snap: BgSnapshot = tracker.snapshot()) {
     // the others it stays hidden even when its toggle is on.
     const on = kind === 'odds' ? o.showOdds || prompting : kind === 'lobby' ? o.showLobby : o.showBuild && !!snap.selectedBuild
     const wanted = o.enabled && on && (inGame || !o.locked)
-    win.setIgnoreMouseEvents(o.locked && !clickable, { forward: true })
-    win.setFocusable(!o.locked || clickable)
-    win.setOpacity(o.opacity)
-    if (wanted && !win.isVisible()) win.showInactive()
+    // Only when something changed: this runs on every publish, several times
+    // a second, and these are synchronous window calls on the thread that
+    // carries the mouse hook (re-applying click-through also re-registers the
+    // window for mouse forwarding).
+    const state = `${o.locked && !clickable}|${!o.locked || clickable}|${o.opacity}`
+    if (applied.get(win) !== state) {
+      applied.set(win, state)
+      win.setIgnoreMouseEvents(o.locked && !clickable, { forward: true })
+      win.setFocusable(!o.locked || clickable)
+      win.setOpacity(o.opacity)
+    }
+    if (wanted && !win.isVisible()) {
+      const t = performance.now()
+      win.showInactive()
+      mark(`showed the ${kind} overlay in ${(performance.now() - t).toFixed(0)}ms`)
+    }
     if (!wanted && win.isVisible()) win.hide()
     // A hidden window gets no mouseleave, so forget it was hovered.
     if (!wanted) hovered.delete(win)
@@ -337,9 +351,14 @@ app.whenReady().then(async () => {
   // Sims on a worker: on this thread they froze the user's mouse (see stallWatch.ts).
   tracker = new Tracker(store, cacheDir, workerSimulator(cacheDir))
   tracker.on('snapshot', (snap: BgSnapshot) => {
+    const t0 = performance.now()
     broadcast('tracker:snapshot', snap)
+    const t1 = performance.now()
     updateOverlays(snap)
+    const t2 = performance.now()
     void updateHighlightWindow(snap)
+    const t3 = performance.now()
+    if (t3 - t0 > 16) mark(`slow publish: sending ${(t1 - t0).toFixed(0)}ms, overlays ${(t2 - t1).toFixed(0)}ms, highlight layer ${(t3 - t2).toFixed(0)}ms`)
   })
   tracker.on('data', () => broadcast('data:changed'))
   registerIpc()
