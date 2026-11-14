@@ -91,6 +91,26 @@ corpse in order run `dies` triggers → **Avenge** counters → **Deathrattles**
 (`extraDeathrattles` from Titus-style effects multiplies them) → **Reborn** (1 hp copy
 at the same position, printed attack). Repeat until stable, max 50 passes.
 
+### Engine hooks for card effects
+
+- **`triggerDeathrattle(m, side, pos)`** runs a minion's own Deathrattle plus any it was
+  given (`grantedDeathrattles`: Leapfrogger, Whirl-O-Tron), then fires
+  `afterDeathrattle` ("After you trigger a Deathrattle"). Death processing and every
+  "trigger a Deathrattle" effect go through it.
+- **`buff()`** fires `onGainStats` on the buffed minion's side ("Whenever a friendly
+  minion gains Attack", "After this gains stats"), with the gain in `ev.atk/ev.hp`.
+  Hand minions have no side, so buffing them triggers nothing. Depth-capped at 20.
+- **`grantedRallies`** (Stoneshell) run alongside the attacker's own Rally.
+- **`rebornFull`** (Timewarped Hag): Reborn keeps its stats and granted effects.
+- **`side.bloodGem`**: what one Blood Gem gives in this fight, +1/+1 plus in-combat
+  upgrades (Gemsplitter, Jazzer). Game-long upgrades aren't in the log, so Blood Gem
+  cards are flagged approximated.
+- **`side.start`**: the warband as the fight (or reserve) began (Magnanimoose).
+- **Per-combat limits** on Rally sections are enforced per minion (`limited()`).
+
+Measured cost of the hooks: about 10% per iteration on a busy 7v7 (28 to 31µs);
+5000 iterations still take about 160ms.
+
 ### Keywords
 
 Taunt, Stealth, Divine Shield, Poisonous, Venomous, Windfury / Mega-Windfury (as a
@@ -145,7 +165,8 @@ Modelled: Wingmen (Illidan).
 - Shop auras ("Your other Murlocs have +2 Attack") are deliberately treated as no-ops,
   because the log already reports the buffed stats. The simulator is only correct when
   fed current stats — which `toInput()` does.
-- Blood Gems are modelled as flat +1/+1; game-long gem upgrades aren't visible.
+- Blood Gems are +1/+1 plus in-combat upgrades; game-long gem upgrades aren't visible
+  (flagged approximated).
 - Magnetic, "deity" text, granting poisonous or stealth via text, and windfury→mega
   upgrades are not modelled.
 - `castSpell` is all-or-nothing: one unparsed sentence makes the whole cast unsupported.

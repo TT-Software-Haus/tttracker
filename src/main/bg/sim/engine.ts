@@ -14,7 +14,7 @@
 //   The winner deals their tavern tier + the tiers of their surviving minions.
 
 import type { CardInfo } from '../../../shared/types'
-import { compileFx, compileHeroPower, type CardFx, type EffectEvent, type HeroPowerFx, type TriggerKind } from './effects'
+import { compileFx, compileHeroPower, type CardFx, type Effect, type EffectEvent, type HeroPowerFx, type TriggerKind } from './effects'
 
 export interface CardSource {
   get(cardId: string | undefined): CardInfo | undefined
@@ -51,6 +51,11 @@ export interface Minion {
   fx: CardFx
   /** Uses of limited triggers ("Twice per combat") so far. */
   uses?: Map<object, number>
+  /** Deathrattles and Rallies given to this minion in combat ("give a friendly Beast this Deathrattle"). */
+  grantedDeathrattles?: Effect[][]
+  grantedRallies?: Effect[][]
+  /** "This is Reborn with full Health and enchantments." */
+  rebornFull?: boolean
 }
 
 export interface Side {
@@ -73,6 +78,10 @@ export interface Side {
   heroPower?: string
   /** "When you have space, summon ... from your hand" effects still waiting for room. */
   pendingFromHand: { tribe: string; left: number }[]
+  /** The warband as this fight (or this reserve) began, for "a minion from the opponent's warband". */
+  start: MinionInput[]
+  /** What one Blood Gem gives. +1/+1 unless something in combat upgrades it; game-long upgrades aren't visible. */
+  bloodGem: { atk: number; hp: number }
 }
 
 /** Input description of one minion on a board. */
@@ -167,6 +176,8 @@ export class Combat {
       reserve: input.reserve?.minions.length ? input.reserve : undefined,
       heroPower: input.heroPower,
       pendingFromHand: [],
+      bloodGem: { atk: 1, hp: 1 },
+      start: input.minions,
     }
     for (const m of input.minions.slice(0, MAX_BOARD)) side.minions.push(this.fromInput(m))
     return side
@@ -179,6 +190,15 @@ export class Combat {
 
   newUid() {
     return this.uid++
+  }
+
+  startingBoard(side: Side): MinionInput[] {
+    return side.start
+  }
+
+  /** A fresh copy of a minion (e.g. one summoned from hand), keeping its stats and keywords. */
+  minionCopy(m: Minion): Minion {
+    return { ...m, uid: this.newUid(), uses: undefined }
   }
 
   /** Summon from hand for any "when you have space" effects that are waiting. */
@@ -325,6 +345,38 @@ export class Combat {
     m.atk = Math.max(0, m.atk + atk)
     m.hp += hp
     m.maxHp += hp
+    if (atk <= 0 && hp <= 0) return
+    // "Whenever a friendly minion gains Attack" / "After this gains stats". Hand minions have no side and trigger nothing.
+    const side = this.sideOf(m)
+    if (!side || this.gainDepth > 20) return
+    this.gainDepth++
+    for (const f of [...side.minions]) {
+      if (this.isDead(f) || !f.fx.onGainStats) continue
+      for (const t of f.fx.onGainStats) {
+        if (t.selfOnly ? f !== m : false) continue
+        if (t.needAtk && atk <= 0) continue
+        this.run(t.effects, f, side, { other: m, atk, hp })
+      }
+    }
+    this.gainDepth--
+  }
+  private gainDepth = 0
+
+  /**
+   * Trigger a minion's Deathrattle(s), its own and any it was given, as if it died at
+   * `pos` (also used by "trigger a friendly Deathrattle" effects on living minions).
+   * Then "after you trigger a Deathrattle" effects fire.
+   */
+  triggerDeathrattle(m: Minion, side: Side, pos: number) {
+    const all = [...(m.fx.deathrattle ? [m.fx.deathrattle] : []), ...(m.grantedDeathrattles ?? [])]
+    for (const effects of all) {
+      this.run(effects, m, side, { pos })
+      for (const f of [...side.minions]) if (!this.isDead(f) && f.fx.afterDeathrattle) this.run(f.fx.afterDeathrattle, f, side, { other: m })
+    }
+  }
+
+  hasDeathrattle(m: Minion) {
+    return !!m.fx.deathrattle?.length || !!m.grantedDeathrattles?.length
   }
 
   /** Deal damage from `source` (may be undefined for effects). Returns damage actually taken. */
@@ -497,6 +549,8 @@ export class Combat {
       side.nameBonus = new Map()
       side.tribeBonus = new Map()
       side.pendingFromHand = []
+      side.bloodGem = { atk: 1, hp: 1 }
+      side.start = r.minions
       side.heroPower = r.heroPower
       // The incoming warband's Start of Combat effects fire as it enters: hero power first
       // (seen live: Illidan's Wingmen buffed the reserve before anything else happened).
@@ -548,12 +602,13 @@ export class Combat {
     attacker.stealth = false
 
     this.run(attacker.fx.rally, attacker, side, { target })
+    for (const r of attacker.grantedRallies ?? []) this.run(r, attacker, side, { target })
     for (const f of [...side.minions]) {
       if (this.isDead(f) || !f.fx.friendlyAttack) continue
       for (const t of f.fx.friendlyAttack) {
         if (t.excludeSelf && f === attacker) continue
         if (t.tribe && !hasTribe(attacker, t.tribe)) continue
-        if (t.rallyOnly && !attacker.fx.rally) continue
+        if (t.rallyOnly && !attacker.fx.rally && !attacker.grantedRallies?.length) continue
         this.run(t.effects, f, side, { other: attacker, target })
       }
     }
@@ -636,9 +691,9 @@ export class Combat {
           }
         }
         // Deathrattles (Titus and friends add extra triggers)
-        if (m.fx.deathrattle) {
+        if (this.hasDeathrattle(m)) {
           const extra = side.minions.reduce((n, f) => n + (!this.isDead(f) ? f.fx.extraDeathrattles ?? 0 : 0), 0)
-          for (let k = 0; k <= extra; k++) this.run(m.fx.deathrattle, m, side, { pos })
+          for (let k = 0; k <= extra; k++) this.triggerDeathrattle(m, side, pos)
         }
         // Reborn
         if (m.reborn) {
@@ -646,6 +701,12 @@ export class Combat {
           const copy = this.makeMinion({ card, hp: 1 })
           copy.reborn = false
           copy.atk = card?.attack ?? m.baseAtk
+          if (m.rebornFull) {
+            copy.atk = m.atk
+            copy.hp = copy.maxHp = m.maxHp
+            copy.grantedDeathrattles = m.grantedDeathrattles
+            copy.grantedRallies = m.grantedRallies
+          }
           if (this.summon(side, copy, pos)) {
             for (const f of side.minions) if (f !== copy && !this.isDead(f) && f.fx.onFriendlyReborn) this.run(f.fx.onFriendlyReborn, f, side, { other: copy })
           }
