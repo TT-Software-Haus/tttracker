@@ -5,7 +5,7 @@ import type { CardInfo } from '../../shared/types'
 // Card data comes from HearthstoneJSON (https://hearthstonejson.com).
 // We keep a slimmed copy cached on disk.
 const CARDS_URL = 'https://api.hearthstonejson.com/v1/latest/enUS/cards.json'
-const CACHE_FILE = 'cards-v2.json'
+export const CACHE_FILE = 'cards-v2.json'
 const MAX_AGE_MS = 1000 * 60 * 60 * 24 // refresh daily
 
 interface RawCard {

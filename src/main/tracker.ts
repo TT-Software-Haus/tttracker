@@ -10,6 +10,7 @@ import { LogTail, lastGameOffset } from './logs/logTail'
 import { readLobbyTribes, readShopSlots, stopVision } from './vision/heroSelect'
 import { stopCapture } from './vision/stream'
 import { mark, profiling } from './stallWatch'
+import type { Simulator } from './bg/sim/remote'
 import { getGameWindowRect } from './vision/gameWindow'
 import type { Store } from './store'
 import type { BgSnapshot, BoardMinion, Build, SetupStatus } from '../shared/types'
@@ -152,6 +153,8 @@ export class Tracker extends EventEmitter {
   constructor(
     private store: Store,
     private cacheDir: string,
+    /** Where combat sims run; main passes a worker thread. Without one, they run inline. */
+    private simulate?: Simulator,
   ) {
     super()
     this.freshModel()
@@ -164,6 +167,7 @@ export class Tracker extends EventEmitter {
     this.lookahead = new Game('GameState')
     this.bg = new BgGame(this.game, this.cards, this.lookahead)
     this.bg.simIterations = this.store.settings.simIterations
+    this.bg.simulate = this.simulate
     this.bg.onChange = () => this.schedulePublish()
     this.bg.onMatchEnd = (m) => {
       if (this.endedDuringReplay) return // finished before we started watching; avoid duplicates

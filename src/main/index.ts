@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
 import { mark, watchStalls } from './stallWatch'
+import { workerSimulator } from './bg/sim/remote'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
 import { DEFAULT_PLACEMENTS, overlayScale, place, placementOf, sameRect, type Placement, type Rect } from './overlayLayout'
@@ -331,7 +332,9 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   store = new Store(app.getPath('userData'))
-  tracker = new Tracker(store, join(app.getPath('userData'), 'carddata'))
+  const cacheDir = join(app.getPath('userData'), 'carddata')
+  // Sims on a worker: on this thread they froze the user's mouse (see stallWatch.ts).
+  tracker = new Tracker(store, cacheDir, workerSimulator(cacheDir))
   tracker.on('snapshot', (snap: BgSnapshot) => {
     broadcast('tracker:snapshot', snap)
     updateOverlays(snap)

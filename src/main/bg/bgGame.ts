@@ -13,6 +13,7 @@ import type { CardDb } from '../cards/cardDb'
 import type { Entity, Game, GameEvent } from '../game/game'
 import type { BgMatch, BgSnapshot, BoardMinion, CombatResult, CombatRound, GameMode, LobbyPlayer, SimOdds } from '../../shared/types'
 import { simulateMany, type BoardInput, type MinionInput } from './sim/engine'
+import type { SimJob, Simulator } from './sim/remote'
 import { randomUUID } from 'node:crypto'
 
 const on = (e: Entity, tag: string) => e.tags[tag] !== undefined && e.tags[tag] !== '0'
@@ -41,6 +42,14 @@ export class BgGame {
   private matchPending = false
   private pendingTimer?: NodeJS.Timeout
   simIterations = 5000
+  /**
+   * Runs sims elsewhere (main sets a worker thread). Without one they run here,
+   * synchronously, as the tests expect.
+   */
+  simulate?: Simulator
+  /** The newest sim started for each round: a resim's odds replace the first's. */
+  private simFor = new WeakMap<CombatRound, number>()
+  private simSeq = 0
 
   /** Called after a finished game; return value is stored as history. */
   /**
@@ -220,7 +229,7 @@ export class BgGame {
       // A teammate's warband has come in: re-run from the current position.
       this.resimPending = false
       this.captureBoards(this.current, false)
-      this.current.odds = this.runSim(this.current, { firstAttacker: first, skipStartOfCombat: true })
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true })
       this.onChange?.()
     }
   }
@@ -246,7 +255,7 @@ export class BgGame {
     this.current = round
     this.rounds.push(round)
     this.resimPending = false
-    round.odds = this.runSim(round, { firstAttacker, skipStartOfCombat: true })
+    this.simulateInto(round, { firstAttacker, skipStartOfCombat: true })
     this.onChange?.()
   }
 
@@ -518,7 +527,39 @@ export class BgGame {
     }
   }
 
-  private runSim(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): SimOdds | undefined {
+  /** Fill in the round's odds: now, or when the sim worker answers. */
+  private simulateInto(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }) {
+    const job = this.simJob(round, opts)
+    if (!job) return
+    const { partial, ...sim } = job
+    if (!this.simulate) {
+      round.odds = this.runSim(sim, partial)
+      return
+    }
+    const seq = ++this.simSeq
+    this.simFor.set(round, seq)
+    this.simulate(sim).then(
+      (odds) => {
+        if (this.simFor.get(round) !== seq) return // a resim replaced it
+        round.odds = partial ? { ...odds, partial: true } : odds
+        this.onChange?.()
+      },
+      (err) => console.error('Simulation failed', err),
+    )
+  }
+
+  private runSim(job: SimJob, partial: boolean): SimOdds | undefined {
+    try {
+      const odds: SimOdds = simulateMany(this.cards, job.a, job.b, job.opts)
+      if (partial) odds.partial = true
+      return odds
+    } catch (err) {
+      console.error('Simulation failed', err)
+      return undefined
+    }
+  }
+
+  private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
     const me = this.game.friendlyPlayerId
     const dummy = this.dummyPlayerId()
     const a = this.simInput(me)
@@ -531,20 +572,18 @@ export class BgGame {
     const partialDuos = this.reserveUnknown('me') || this.reserveUnknown('opp')
     const myHp = effectiveHealth(this.myLobbyHero())
     const oppHp = effectiveHealth(this.lobbyHero(round.opponentPlayerId))
-    try {
-      const odds: SimOdds = simulateMany(this.cards, a, b, {
+    return {
+      a,
+      b,
+      opts: {
         iterations: this.simIterations,
         timeBudgetMs: 400,
         firstAttacker: opts.firstAttacker,
         skipStartOfCombat: opts.skipStartOfCombat,
         myHealth: myHp || undefined,
         oppHealth: oppHp || undefined,
-      })
-      if (partialDuos) odds.partial = true
-      return odds
-    } catch (err) {
-      console.error('Simulation failed', err)
-      return undefined
+      },
+      partial: partialDuos,
     }
   }
 
