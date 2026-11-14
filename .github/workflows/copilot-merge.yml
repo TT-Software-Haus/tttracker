@@ -28,37 +28,42 @@ jobs:
     steps:
       # The `copilot-review` status is the required check on develop's ruleset:
       # each new push has none until Copilot reviews that commit clean.
+      # Every verdict is recomputed each run, so a comment added after a
+      # failed merge still blocks the retry.
       - run: |
+          # A failed API call must fail the run, never read as "no comments".
+          set -euo pipefail
           is_copilot='.user.login == "Copilot" or .user.login == "copilot-pull-request-reviewer[bot]"'
           # Forks are left to a human: auto-merging strangers' code into a public repo isn't wanted.
-          for pr in $(gh pr list --base develop --state open --json number,isCrossRepository \
+          for pr in $(gh pr list --base develop --state open --limit 1000 --json number,isCrossRepository \
                         --jq '.[] | select(.isCrossRepository | not) | .number'); do
             export SHA=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+
+            reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
+                        --jq ".[] | select(.commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
+            if [ "$reviews" -eq 0 ]; then echo "#$pr: Copilot hasn't reviewed $SHA yet"; continue; fi
+
+            # Every Copilot comment on this commit, across all its reviews, so a
+            # later review that doesn't repeat an earlier finding can't clear it.
+            comments=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/comments" \
+                         --jq ".[] | select(.original_commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
             state=$(gh api "repos/$GH_REPO/commits/$SHA/status" \
                       --jq '[.statuses[] | select(.context == "copilot-review")][0].state // ""')
 
-            if [ -z "$state" ]; then
-              reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
-                          --jq ".[] | select(.commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
-              [ "$reviews" -gt 0 ] || { echo "#$pr: Copilot hasn't reviewed $SHA yet"; continue; }
-              # Every Copilot comment on this commit, across all its reviews, so a
-              # later review that doesn't repeat an earlier finding can't clear it.
-              comments=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/comments" \
-                           --jq ".[] | select(.original_commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
-              if [ "$comments" -gt 0 ]; then
-                gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure -f context=copilot-review \
-                  -f description="Copilot left $comments comment(s)" > /dev/null
-                echo "#$pr: Copilot left $comments comment(s)"
-                continue
-              fi
-              gh api "repos/$GH_REPO/statuses/$SHA" -f state=success -f context=copilot-review \
-                -f description="Copilot raised nothing" > /dev/null
-              gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
-              state=success
+            # Statuses are only posted on change: a commit holds at most 1000 of them.
+            if [ "$comments" -gt 0 ]; then
+              echo "#$pr: Copilot left $comments comment(s)"
+              [ "$state" = failure ] || gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure \
+                -f context=copilot-review -f description="Copilot left $comments comment(s)" > /dev/null
+              continue
             fi
 
+            approved=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
+                         --jq '.[] | select(.commit_id == env.SHA and .user.login == "github-actions[bot]" and .state == "APPROVED") | .id' | wc -l)
+            [ "$approved" -gt 0 ] || gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
+            [ "$state" = success ] || gh api "repos/$GH_REPO/statuses/$SHA" -f state=success \
+              -f context=copilot-review -f description="Copilot raised nothing" > /dev/null
+
             # A failed merge (conflict, mergeability not computed yet) is retried next run.
-            if [ "$state" = success ]; then
-              gh pr merge "$pr" --merge --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
-            fi
+            gh pr merge "$pr" --merge --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
           done
