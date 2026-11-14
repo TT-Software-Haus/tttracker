@@ -160,7 +160,9 @@ const FOLLOW_MS = 50
 function followGameWindow() {
   setInterval(async () => {
     const boxes = highlightWin && !highlightWin.isDestroyed() && highlightWin.isVisible()
-    if (!boxes && !KINDS.some((k) => overlays[k]?.isVisible())) return
+    // isDestroyed first: this keeps ticking while the app quits, and asking a
+    // destroyed window anything throws.
+    if (!boxes && !KINDS.some((k) => overlays[k] && !overlays[k].isDestroyed() && overlays[k].isVisible())) return
     const g = await getGameWindowRect()
     // Without this the boxes stayed where the window used to be (seen live):
     // the highlight layer was only moved when the log changed.
