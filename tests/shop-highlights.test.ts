@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import type { BgSnapshot, Build } from '../src/shared/types'
 
 // The screen is whatever these say it is.
-const screen = { slots: [] as { x: number; y: number; width: number; height: number }[], reads: 0 }
+const screen = { slots: [] as { x: number; y: number; width: number; height: number }[], reads: 0, moves: 0 }
 vi.mock('../src/main/vision/heroSelect', () => ({
   readLobbyTribes: async () => [],
   stopVision: async () => {},
@@ -38,7 +38,8 @@ describe('highlight boxes over the tavern', () => {
     const { Store } = await import('../src/main/store')
     const { Tracker } = await import('../src/main/tracker')
     tracker = new Tracker(new Store(root), join(root, 'carddata'))
-    tracker.publish = () => {}
+    screen.moves = 0
+    tracker.publish = () => screen.moves++
     // The log's tavern size, spells included. Defaults to what the screen shows.
     logSize = undefined
     tracker.bg.tavernSize = () => logSize ?? screen.slots.length
@@ -72,25 +73,29 @@ describe('highlight boxes over the tavern', () => {
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([250])
   })
 
-  it('stops reading once the cards have settled, until the tavern changes', async () => {
-    // Reading every second all turn was the suspect for hitches seen live.
+  it('follows the cards when they move long after looking settled', async () => {
+    // Seen live: after a spell was bought, the cards held their old places
+    // for a moment, then re-centred. Stopping once settled left the boxes behind.
     screen.slots = [slot(100), slot(200), slot(300)]
-    screen.reads = 0
     tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(screen.reads).toBe(5) // placed, then the same four times
+    await vi.advanceTimersByTimeAsync(5000)
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
+    screen.slots = [slot(150), slot(250), slot(350)]
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([350])
+  })
 
-    // Seen live: a freeze publishes a snapshot while the cards hop. The tavern
-    // hasn't changed, so that mustn't start the reads again.
+  it('ignores a one-read blip, like the hop a freeze makes', async () => {
+    screen.slots = [slot(100), slot(200), slot(300)]
     tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(screen.reads).toBe(5)
-
-    tracker.refreshHighlights(base([minion('BRANN', 2)]), build)
-    await vi.advanceTimersByTimeAsync(10_000)
-    expect(screen.reads).toBe(10)
-    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([200])
+    await vi.advanceTimersByTimeAsync(2000)
+    // One read sees the cards mid-hop, the next sees them back.
+    screen.slots = [slot(120), slot(220), slot(320)]
+    await vi.advanceTimersByTimeAsync(250)
+    screen.slots = [slot(100), slot(200), slot(300)]
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
+    expect(screen.moves).toBe(1) // the boxes were placed once, never moved
   })
 
   it('drops the boxes the moment the tavern changes, before the next read', async () => {

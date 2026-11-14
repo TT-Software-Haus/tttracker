@@ -192,19 +192,19 @@ the log's count of tavern cards, spells included (tavern spells are
 after a purchase, shows up as a mismatch, and that read draws nothing.
 While a wanted minion (or, with *Debug minion highlight*, any minion) is on offer,
 `Tracker.readHighlights` reads the tavern 0.25s after the tavern changes, then every
-0.25s until the boxes have stayed put for four reads in a row (about a second; a slide
-can start a moment after the log changes). It then stops until the tavern changes
-again; other snapshots don't restart it (a freeze publishes one while the cards hop,
-and a read then put the boxes mid-hop). The log can't say where cards *are*, only which slot they're in, so the screen is
-the authority on position. Any change to what's on offer clears the boxes
-at once. A captured frame is the visible window, title bar included (DWM's extended
+0.25s for as long as there's something to box (~2.5ms a read). The boxes move only when
+two reads in a row agree on a new position. The tavern can move after it looks settled:
+after a spell was bought, the cards held their old places for a moment, then re-centred.
+And a one-read blip shouldn't move them: a freeze makes the cards hop. The log can't
+say where cards *are*, only which slot they're in, so the screen is the authority on
+position. Any change to what's on offer clears the boxes at once. A captured frame is the visible window, title bar included (DWM's extended
 frame bounds), while the boxes are drawn over the client area, so `gameWindow.ts`
 returns both: boxes are scaled by the captured size and shifted by the client area's
 offset inside it. In fullscreen the two are the same; windowed at 150% the frame was
 1924×1127 around a 1920×1080 client area, offset (2, 45). A result is dropped if the
 tavern moved on while it was being read. When nothing is left to box, the loop stops
-and closes the capture session. Any failure means no boxes, never
-misplaced ones.
+and closes the capture session. Any failure means no boxes, never misplaced
+ones. Moving or resizing the game window is followed too, since reads never stop.
 
 ## Builds flow
 
