@@ -23,6 +23,8 @@ export interface CardInfo {
   normalId?: string
   bgHero?: boolean
   duosOnly?: boolean
+  /** A Timewarped card: offered by the Timewarped tavern, not the regular pool. */
+  timewarp?: boolean
 }
 
 export type GameMode = 'solo' | 'duos'
@@ -68,6 +70,8 @@ export interface SimOdds {
   ms: number
   /** Names of minions whose effects the simulator can't model yet. */
   unsupported: string[]
+  /** Names of cards modelled on a best guess, where the log doesn't say what they need. */
+  approximated?: string[]
   /** Duos: a teammate's warband wasn't known, so only the current boards were simulated. */
   partial?: boolean
 }

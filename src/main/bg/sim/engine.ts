@@ -668,6 +668,7 @@ export interface SimSummary {
   iterations: number
   ms: number
   unsupported: string[]
+  approximated: string[]
 }
 
 export function simulateMany(
@@ -703,10 +704,13 @@ export function simulateMany(
     } else tie++
   }
   const unsupported = new Set<string>()
+  const approximated = new Set<string>()
   for (const board of [a, b])
     for (const m of [...board.minions, ...(board.reserve?.minions ?? [])]) {
       const fx = fxCache.get(m.cardId) ?? compileFx(cards.get(m.cardId), cards)
-      if (fx.unsupported.length) unsupported.add(cards.get(m.cardId)?.name ?? m.cardId)
+      const name = cards.get(m.cardId)?.name ?? m.cardId
+      if (fx.unsupported.length) unsupported.add(name)
+      else if (fx.approximated?.length) approximated.add(name)
     }
   // Hero powers only act at Start of Combat: a reserve's always does, the first warbands' only if it hasn't happened yet.
   const powers = [a, b].flatMap((board) => [opts.skipStartOfCombat ? undefined : board.heroPower, board.reserve?.heroPower])
@@ -725,5 +729,6 @@ export function simulateMany(
     iterations: n,
     ms: Date.now() - t0,
     unsupported: [...unsupported],
+    approximated: [...approximated],
   }
 }

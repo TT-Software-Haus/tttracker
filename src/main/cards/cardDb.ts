@@ -27,6 +27,7 @@ interface RawCard {
   battlegroundsPremiumDbfId?: number
   battlegroundsHero?: boolean
   isBattlegroundsDuosExclusive?: boolean
+  battlegroundsTimewarpCard?: boolean
 }
 
 export class CardDb {
@@ -168,6 +169,7 @@ export function slim(raw: RawCard[]): CardInfo[] {
         if (c.isBattlegroundsPoolMinion) out.pool = true
         if (c.battlegroundsHero) out.bgHero = true
         if (c.isBattlegroundsDuosExclusive) out.duosOnly = true
+        if (c.battlegroundsTimewarpCard) out.timewarp = true
         const g = c.battlegroundsPremiumDbfId ? byDbf.get(c.battlegroundsPremiumDbfId) : undefined
         if (g) out.goldenId = g.id
         const n = normalOf.get(c.id)

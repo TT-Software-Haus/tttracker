@@ -151,9 +151,6 @@ Modelled: Wingmen (Illidan).
 - `castSpell` is all-or-nothing: one unparsed sentence makes the whole cast unsupported.
 - `unsupported` is computed over board and reserve minions only — not hand or teammate
   minions.
-- Unsupported leading text is only *detected* if it mentions attack/dies/summon/reborn/
-  divine shield/damage/combat. Combat-relevant text phrased otherwise is dropped
-  silently.
 - Hard caps: 300 attack steps and 50 death-resolution passes. Hitting either truncates
   the fight (and probably reports a tie).
 - Per-combat trigger limits ("Twice per combat") are enforced on generic triggers;
@@ -164,10 +161,22 @@ Modelled: Wingmen (Illidan).
 
 ```sh
 # download cards.json from https://hearthstonejson.com first
-npx tsx scripts/sim-coverage.ts cards.json        # current tavern pool
-npx tsx scripts/sim-coverage.ts cards.json --all  # + tokens, rewards, rotated cards
+npx tsx scripts/sim-coverage.ts cards.json                # tavern pool + Timewarped tavern
+npx tsx scripts/sim-coverage.ts cards.json --all          # every BG minion: tokens, rewards, rotated
+npx tsx scripts/sim-coverage.ts cards.json --hero-powers  # hero powers with combat text
 ```
 
-Prints one line per minion (and its golden version) whose text didn't compile, with the
-offending sentences, then a `N minions checked; M have unmodelled text` summary. That
-list is the to-do list for `effects.ts`.
+Prints one line per card (and its golden version) whose text didn't compile, with the
+offending sentences (`TW` marks Timewarped), then a summary. That list is the to-do list
+for `effects.ts`.
+
+**Every unrecognised sentence is reported.** Shop-only text is recognised instead of
+hidden: `SHOP_TRIGGER` (sentence openings like "At the end of your turn"), `SHOP_WORDS`
+(Tavern, Gold, Refresh, sell/buy, Pass, "each turn"…), parenthesised counters, and any
+sentence that directly follows shop-only text (its continuation). Timewarped cards carry
+`battlegroundsTimewarpCard`, not `isBattlegroundsPoolMinion`; `slim()` keeps it as
+`timewarp`.
+
+**Approximated.** `CardFx.approximated` lists text modelled on a best guess because the
+log doesn't give what it needs; it reaches the UI as an "Approximated: …" line under the
+odds, separate from "Not modelled".

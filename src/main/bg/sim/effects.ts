@@ -76,6 +76,8 @@ export interface CardFx {
   tauntWhileShielded?: boolean
   /** Text we couldn't turn into effects (empty = fully modelled). */
   unsupported: string[]
+  /** Text modelled on a best guess, because the log doesn't give what it needs. */
+  approximated?: string[]
 }
 
 const TRIBES: Record<string, string> = {
@@ -203,7 +205,7 @@ function parseAction(sentence: string, cards: CardSource, self: CardInfo | undef
     s = s.replace(/ twice$/i, '')
   }
   s = s.replace(/^for the rest of this combat, /i, '').replace(/ permanently$/i, '')
-  if (IRRELEVANT.test(s)) return 'ignore'
+  if (IRRELEVANT.test(s) || SHOP_TRIGGER.test(s) || SHOP_WORDS.test(s)) return 'ignore'
   const once = parseActionOnce(s, cards, self)
   if (!once || once === 'ignore' || times === 1) return once
   return (c, me, side, ev) => {
@@ -566,10 +568,30 @@ const SHOP_TRIGGER = new RegExp(
       'Your Tavern spells',
       'Your left-most Beast attacks it',
       'Whenever this (kills a minion|takes damage), give a minion in your hand',
+      'This has all minion types', // already in the card's races
+      "This (minion )?(sells|costs|can't gain)",
+      '(One|Two|Four|The first|The next) .* each turn',
+      'While this is in your hand',
+      'If you have any unspent Gold',
+      'Once you buy',
+      'Upgrading the Tavern',
+      'Minions in the Tavern',
+      'The Tavern offers',
+      'Your Refreshes',
+      'If this is Golden when you sell',
+      'After the first time this is sold',
+      'After you (call upon|use your Hero Power|trigger a Battlecry|summon a minion of your Tier|kill a second minion)',
+      'After (a|the) (Blood Gem|Tavern)',
+      'Whenever a (Blood Gem|Dragon enters)',
+      'Whenever your hero takes damage',
+      'Your other \\w+ have', // auras: the log already shows the buffed stats
     ].join('|') +
     ')',
   'i',
 )
+
+/** Text that can only matter outside combat, wherever it appears in a sentence. */
+const SHOP_WORDS = /\b(Tavern|Refresh(es|ed)?|Gold|sells?|sold|buy|bought|Pass(es|ed)?|Discover|Spellcraft|Hero Power|each turn|per turn|next turn|your turn|until next turn|Battlecries|end of turn effects|Blood Gems played from your hand|Bounties|discarded)\b/i
 
 export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx {
   const fx: CardFx = { unsupported: [] }
@@ -596,12 +618,22 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
   const problems: string[] = []
   // Leading text: keyword list ("Taunt Reborn") and/or trigger sentences.
   const KEYWORDS = /^((Taunt|Reborn|Divine Shield|Windfury|Venomous|Poisonous|Stealth|Magnetic|Mega-Windfury|Cleave)[,.]?(\s+|$))+/i
-  for (const raw of leading.split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean)) {
+  let inShopText = false
+  // Parenthesised notes are counters and reminders ("(3 left!)", "(Improves each turn!)"); limits are read separately.
+  for (const raw of leading.replace(/\([^)]*\)/g, ' ').split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean)) {
     const sentence = raw.replace(KEYWORDS, '').trim()
     if (!sentence) continue
-    if (parseTriggerSentence(sentence, cards, card, fx, problems, perCombatLimit(text))) continue
-    if (SHOP_TRIGGER.test(sentence) || /Can Magnetize|Has \+\d/.test(sentence)) continue
-    if (/attack|dies|summon|reborn|divine shield|damage|combat/i.test(sentence)) problems.push(sentence)
+    if (parseTriggerSentence(sentence, cards, card, fx, problems, perCombatLimit(text))) {
+      inShopText = false
+      continue
+    }
+    if (SHOP_TRIGGER.test(sentence) || SHOP_WORDS.test(sentence) || /Can Magnetize|Has \+\d|^This has a different/.test(sentence)) {
+      inShopText = true
+      continue
+    }
+    // A sentence we can't read that follows shop-only text continues it ("When you sell this, ... Improve your future Ballers.").
+    if (inShopText) continue
+    problems.push(sentence)
   }
 
   for (const sec of sections) {
