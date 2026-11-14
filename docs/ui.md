@@ -113,8 +113,9 @@ pointer is over them.
 
 **Build overlay** (`kind=build`) — right-hand sidebar for `snap.selectedBuild`: the
 current stage (the first whose `byTurn` hasn't passed, else the last), `have/total`,
-turns left or overdue, and each minion and addon ticked if owned (on the board or in
-hand, `snap.hand`, goldens from a triple included) or flagged *in shop* if it's in `snap.shop`. A build minion in hand
+turns left or overdue, and each minion and addon ticked if owned (on the board, or the
+board as the fight began during combat, or in hand, `snap.hand`, goldens from a triple
+included) or flagged *in shop* if it's in `snap.shop`. A build minion in hand
 isn't boxed in the tavern either. Logic is `buildProgress()` in `lib.ts`; goldens count as the
 minion. Below them, under "How to play", is `build.description` in full. Its
 `[[Name||dbfId]]` links (from HSReplay) are split by `parseCardLinks()` and render

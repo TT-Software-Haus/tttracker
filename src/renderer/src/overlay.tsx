@@ -157,8 +157,11 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const [tip, setTip] = useState<{ card: CardInfo; style: CSSProperties }>()
   if (!build) return null
   if (picking) return <BuildPicker snap={snap} onClose={() => setPicking(false)} />
-  // In hand counts as bought: it's yours, just not played yet.
-  const p = buildProgress(build, Math.max(1, snap.round), [...snap.board, ...snap.hand], snap.shop)
+  // In hand counts as bought: it's yours, just not played yet. In combat the
+  // board is the fighting copy, which loses minions as they die (seen live:
+  // ticks vanished mid-fight), so use the board as the fight began.
+  const board = snap.phase === 'combat' && snap.combat?.myBoard.length ? snap.combat.myBoard : snap.board
+  const p = buildProgress(build, Math.max(1, snap.round), [...board, ...snap.hand], snap.shop)
   if (!p) return null
   const done = p.have === p.minions.length
   /**
