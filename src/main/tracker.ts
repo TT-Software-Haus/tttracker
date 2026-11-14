@@ -76,6 +76,12 @@ export class Tracker extends EventEmitter {
   private lingerTimer?: NodeJS.Timeout
   private powerTail?: LogTail
   private logDir?: string
+  /**
+   * We were watching this log folder before Power.log existed, so its first
+   * lines are a game starting now, not history to replay. Missing this skipped
+   * the tribe read in the first game of every Hearthstone session.
+   */
+  private powerLogIsNew = false
   private dirTimer?: NodeJS.Timeout
   private emitTimer?: NodeJS.Timeout
   private catchingUp = false
@@ -108,6 +114,10 @@ export class Tracker extends EventEmitter {
    */
   private get heroPicked() {
     return this.game.playerEntity(this.game.friendlyPlayerId)?.tags.MULLIGAN_STATE === 'DONE'
+  }
+  /** The same, asked of GameState: PowerTaskList may still be on the last game, where the hero was picked long ago. */
+  private get lookaheadHeroPicked() {
+    return this.lookahead.playerEntity(this.lookahead.friendlyPlayerId)?.tags.MULLIGAN_STATE === 'DONE'
   }
   private selectedBuildId?: string
   /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
@@ -148,24 +158,36 @@ export class Tracker extends EventEmitter {
       if (e.type === 'gameStart') {
         this.overSince = undefined
         this.endedDuringReplay = false
-        this.stopTribeRead()
         this.stopHighlights()
-        this.screenTribes = []
         this.selectedBuildId = undefined
         this.buildPromptAnswered = false
         this.beginGame(`${this.logDir}|${this.currentLine}`)
       }
-      // The minion-type banner is only on screen while you're choosing, so the
-      // read starts when the heroes are offered — not at MULLIGAN_STATE=DONE,
-      // which is the moment the screen is dismissed (measured on a real game:
-      // heroes offered 11:19:59, DONE 11:21:08, first shop 0.4s after that).
-      if (e.type === 'created' && e.entity.tags.BACON_HERO_CAN_BE_DRAFTED === '1' && !this.catchingUp) this.startTribeRead()
       if (e.type === 'gameEnd') {
         this.endedDuringReplay = this.catchingUp
         this.overSince = this.catchingUp ? 0 : Date.now()
         if (this.lingerTimer) clearTimeout(this.lingerTimer)
         this.lingerTimer = setTimeout(() => this.publish(), GAME_OVER_LINGER_MS + 100)
       }
+    })
+    // The minion-type banner is only on screen while you're choosing, so the
+    // read starts when the heroes are offered — not at MULLIGAN_STATE=DONE,
+    // which is the moment the screen is dismissed (measured on a real game:
+    // heroes offered 11:19:59, DONE 11:21:08, first shop 0.4s after that).
+    //
+    // Watched on the GameState stream: PowerTaskList logs the offered heroes as
+    // "FULL_ENTITY - Updating" of entities it already knows, so they never count
+    // as created there. And GameState can run thousands of lines ahead of
+    // PowerTaskList's CREATE_GAME, so the per-game reset lives here too, or the
+    // late gameStart would cancel the read it just started.
+    this.lookahead.on((e) => {
+      if (e.type === 'gameStart') {
+        this.stopTribeRead()
+        this.screenTribes = []
+      }
+      // Heroes created later in the game (seen live) carry the tag too; the
+      // banner is long gone by then.
+      if (e.type === 'created' && e.entity.tags.BACON_HERO_CAN_BE_DRAFTED === '1' && !this.catchingUp && !this.lookaheadHeroPicked) this.startTribeRead()
     })
     this.overSince = undefined
   }
@@ -254,6 +276,7 @@ export class Tracker extends EventEmitter {
       this.powerTail?.stop()
       this.powerTail = undefined
       this.logDir = dir
+      this.powerLogIsNew = false
       this.freshModel()
       this.publish()
     }
@@ -270,11 +293,14 @@ export class Tracker extends EventEmitter {
     if (!dir || this.powerTail) return
     // Power.log is only created when the first match of the session starts.
     const powerPath = join(dir, 'Power.log')
-    if (!existsSync(powerPath)) return
+    if (!existsSync(powerPath)) {
+      this.powerLogIsNew = true
+      return
+    }
 
     // Replay only the latest game, then follow live.
     const offset = await lastGameOffset(powerPath)
-    let first = true
+    let first = !this.powerLogIsNew
     // The replayed history is old: judge staleness by when the file was last written.
     this.lastLineAt = statSync(powerPath).mtimeMs
     this.powerTail = new LogTail(powerPath, (lines) => {
@@ -330,7 +356,7 @@ export class Tracker extends EventEmitter {
       }
       // Stop once the hero is locked in: the banner has gone, and anything we
       // read after that is some other screen.
-      if (attempts >= TRIBE_READ_ATTEMPTS || this.heroPicked) {
+      if (attempts >= TRIBE_READ_ATTEMPTS || this.lookaheadHeroPicked) {
         stopCapture()
         return
       }
