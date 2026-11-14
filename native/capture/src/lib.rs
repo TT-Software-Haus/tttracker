@@ -11,7 +11,6 @@
 //! free-threaded and polled, so no message loop or dispatcher is needed.
 
 use std::cell::RefCell;
-use std::time::{Duration, Instant};
 
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
@@ -29,9 +28,6 @@ use windows::Win32::System::WinRT::Direct3D11::{CreateDirect3D11DeviceFromDXGIDe
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, IsIconic};
-
-/// How long a freshly opened session may take to deliver its first frame.
-const FIRST_FRAME_WAIT: Duration = Duration::from_millis(1500);
 
 #[napi(object)]
 pub struct Frame {
@@ -69,6 +65,10 @@ impl Drop for Session {
 
 thread_local! {
     static SESSION: RefCell<Option<Session>> = const { RefCell::new(None) };
+    // Leaked, never dropped: releasing them while the process exits made it
+    // exit with code 122 (tested in Node). One set per process (or per driver
+    // reset), and Windows reclaims them at exit anyway.
+    static DEVICES: RefCell<Option<&'static Devices>> = const { RefCell::new(None) };
 }
 
 type R<T> = windows::core::Result<T>;
@@ -87,7 +87,22 @@ fn game_window() -> Option<HWND> {
     Some(hwnd)
 }
 
-fn open(hwnd: HWND) -> R<Session> {
+/// The Direct3D device, made once and shared by every session. Making it is
+/// most of the cost of opening a session (~300ms the first time in a process),
+/// so main calls `warm()` at launch, before any overlay has put its mouse hook
+/// on this thread; reopening a session later then costs a fraction of that.
+type Devices = (ID3D11Device, ID3D11DeviceContext, IDirect3DDevice);
+
+fn devices() -> R<Devices> {
+    DEVICES.with_borrow_mut(|d| {
+        if d.is_none() {
+            *d = Some(Box::leak(Box::new(make_devices()?)));
+        }
+        Ok(d.unwrap().clone())
+    })
+}
+
+fn make_devices() -> R<Devices> {
     // Electron has usually set the thread's apartment up already; a mismatch
     // error just means it has, and WinRT works either way.
     let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
@@ -110,7 +125,13 @@ fn open(hwnd: HWND) -> R<Session> {
     let device = device.unwrap();
     let context = context.unwrap();
     let winrt_device: IDirect3DDevice = unsafe { CreateDirect3D11DeviceFromDXGIDevice(&device.cast::<IDXGIDevice>()?)? }.cast()?;
+    // Load the capture classes now too, so the first session doesn't pay for it.
+    factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+    Ok((device, context, winrt_device))
+}
 
+fn open(hwnd: HWND) -> R<Session> {
+    let (device, context, winrt_device) = devices()?;
     let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
     let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(hwnd)? };
     let size = item.Size()?;
@@ -126,20 +147,17 @@ fn open(hwnd: HWND) -> R<Session> {
 }
 
 impl Session {
-    /// The newest frame, waiting briefly if the session hasn't sent one yet.
+    /// The newest frame, or None if the session hasn't sent one yet. Never
+    /// waits: this runs on Electron's main thread, which carries the overlays'
+    /// mouse hook, and sleeping here for a fresh session's first frame froze
+    /// the cursor for 300-400ms at every shop (seen with --profile). Callers
+    /// retry anyway.
     fn latest(&mut self) -> R<Option<Direct3D11CaptureFrame>> {
-        let deadline = Instant::now() + FIRST_FRAME_WAIT;
-        loop {
-            // Drain to the newest; the older ones go back to the pool.
-            while let Ok(f) = self.pool.TryGetNextFrame() {
-                if let Some(old) = self.last.replace(f) {
-                    let _ = old.Close();
-                }
+        // Drain to the newest; the older ones go back to the pool.
+        while let Ok(f) = self.pool.TryGetNextFrame() {
+            if let Some(old) = self.last.replace(f) {
+                let _ = old.Close();
             }
-            if self.last.is_some() || Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(5));
         }
         let Some(frame) = self.last.clone() else { return Ok(None) };
         // The window was resized: later frames come at the new size.
@@ -303,11 +321,19 @@ pub fn frame(height: u32, fraction: f64) -> napi::Result<Option<Frame>> {
         }
         let result = s.as_mut().unwrap().read(height, fraction);
         if result.is_err() {
-            // Start afresh next time rather than retrying a broken session.
+            // Start afresh next time rather than retrying a broken session,
+            // or a lost device (a driver reset, say).
             *s = None;
+            DEVICES.with_borrow_mut(|d| *d = None);
         }
         result.map_err(napi_err)
     })
+}
+
+/// Make the Direct3D device ahead of the first capture (see `devices()`).
+#[napi]
+pub fn warm() -> napi::Result<()> {
+    devices().map(|_| ()).map_err(napi_err)
 }
 
 /// Stop capturing until the next `frame()`.

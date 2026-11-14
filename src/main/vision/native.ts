@@ -6,6 +6,8 @@ export interface NativeCapture {
   /** See native/capture/src/lib.rs. */
   frame(height: number, fraction: number): { width: number; height: number; bgra: Buffer } | null
   close(): void
+  /** Make the Direct3D device ahead of the first capture: ~250ms, once. */
+  warm(): void
 }
 
 /**

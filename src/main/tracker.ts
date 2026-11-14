@@ -84,6 +84,7 @@ export class Tracker extends EventEmitter {
   private lineQueue: { lines: string[]; catchingUp: boolean; at: number }[] = []
   /** The tail is part-way through one read: more lines are on their way. */
   private moreComing = false
+  private cardsLoaded = false
   private logDir?: string
   /**
    * We were watching this log folder before Power.log existed, so its first
@@ -214,16 +215,27 @@ export class Tracker extends EventEmitter {
     this.overSince = undefined
   }
 
-  async start() {
-    if (!this.store.settings.hearthstonePath) {
-      this.store.updateSettings({ hearthstonePath: await findInstallPath() })
-    }
+  /**
+   * Load the card data. Main calls this before creating any window: parsing
+   * the ~5MB cache blocks for ~40ms, and once an overlay is up its mouse hook
+   * makes that a frozen cursor (seen with --profile).
+   */
+  async loadCards() {
+    if (this.cardsLoaded) return
+    this.cardsLoaded = true
     try {
       await this.cards.init(this.cacheDir)
       mark('cards loaded')
     } catch (err) {
       console.error('Could not load card data', err)
     }
+  }
+
+  async start() {
+    if (!this.store.settings.hearthstonePath) {
+      this.store.updateSettings({ hearthstonePath: await findInstallPath() })
+    }
+    await this.loadCards()
     this.logConfigOk = await checkLogConfig(this.store.settings.hearthstonePath)
     // Logging already switched on but the size-limit fix missing (older versions of this app
     // wrote it to the wrong file): repair it, since the user has already opted in.

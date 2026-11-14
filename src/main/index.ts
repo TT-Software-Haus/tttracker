@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { Store } from './store'
 import { Tracker } from './tracker'
 import { mark, watchStalls } from './stallWatch'
+import { nativeCapture } from './vision/native'
 import { workerSimulator } from './bg/sim/remote'
 import { fetchCompDetail, fetchComps } from './comps'
 import { getGameWindowRect } from './vision/gameWindow'
@@ -342,6 +343,16 @@ app.whenReady().then(async () => {
   })
   tracker.on('data', () => broadcast('data:changed'))
   registerIpc()
+  // Before any window: these block the main thread (~250ms making the capture
+  // device, ~40ms parsing the card data), and once an overlay is up its mouse
+  // hook turns any block into a frozen cursor. With no hook yet, nothing waits.
+  try {
+    nativeCapture()?.warm()
+  } catch (err) {
+    console.warn('could not prepare screen capture', err)
+  }
+  mark('capture device ready')
+  await tracker.loadCards()
   createMainWindow()
   createOverlay('odds')
   createOverlay('lobby')
