@@ -1,41 +1,64 @@
-# When Copilot reviews a PR into develop and leaves no comments on the current
-# head commit, approve it and merge it. Copilot itself can only comment, never
-# approve or merge, so the Actions bot does both on its verdict.
+# Merges PRs into develop once Copilot has reviewed their head commit and left
+# no comments on it. Copilot itself can only comment, never approve or merge,
+# so the Actions bot does both on its verdict.
+#
+# Polls rather than reacting to pull_request_review: a run triggered by
+# Copilot is held for manual approval, as Copilot counts as a first-time
+# contributor. Schedules run from the default branch (develop).
 name: Merge on Copilot review
 
 on:
-  pull_request_review:
-    types: [submitted]
+  schedule:
+    - cron: "*/5 * * * *" # ponytail: GitHub often runs this late; merges trail Copilot by minutes
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
   statuses: write
 
+concurrency: copilot-merge
+
 jobs:
   merge:
-    if: >-
-      github.event.pull_request.base.ref == 'develop' &&
-      github.event.review.user.login == 'copilot-pull-request-reviewer[bot]' &&
-      github.event.review.commit_id == github.event.pull_request.head.sha
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      PR: ${{ github.event.pull_request.number }}
-      REVIEW: ${{ github.event.review.id }}
-      SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       # The `copilot-review` status is the required check on develop's ruleset:
       # each new push has none until Copilot reviews that commit clean.
       - run: |
-          n=$(gh api "repos/$GH_REPO/pulls/$PR/reviews/$REVIEW/comments" --jq length)
-          if [ "$n" -gt 0 ]; then
-            gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure -f context=copilot-review \
-              -f description="Copilot left $n comment(s)"
-            exit 0
-          fi
-          gh api "repos/$GH_REPO/statuses/$SHA" -f state=success -f context=copilot-review \
-            -f description="Copilot raised nothing"
-          gh pr review "$PR" --approve --body "Copilot reviewed this and raised nothing."
-          gh pr merge "$PR" --merge
+          is_copilot='.user.login == "Copilot" or .user.login == "copilot-pull-request-reviewer[bot]"'
+          # Forks are left to a human: auto-merging strangers' code into a public repo isn't wanted.
+          for pr in $(gh pr list --base develop --state open --json number,isCrossRepository \
+                        --jq '.[] | select(.isCrossRepository | not) | .number'); do
+            export SHA=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
+            state=$(gh api "repos/$GH_REPO/commits/$SHA/status" \
+                      --jq '[.statuses[] | select(.context == "copilot-review")][0].state // ""')
+
+            if [ -z "$state" ]; then
+              reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
+                          --jq ".[] | select(.commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
+              [ "$reviews" -gt 0 ] || { echo "#$pr: Copilot hasn't reviewed $SHA yet"; continue; }
+              # Every Copilot comment on this commit, across all its reviews, so a
+              # later review that doesn't repeat an earlier finding can't clear it.
+              comments=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/comments" \
+                           --jq ".[] | select(.original_commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
+              if [ "$comments" -gt 0 ]; then
+                gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure -f context=copilot-review \
+                  -f description="Copilot left $comments comment(s)" > /dev/null
+                echo "#$pr: Copilot left $comments comment(s)"
+                continue
+              fi
+              gh api "repos/$GH_REPO/statuses/$SHA" -f state=success -f context=copilot-review \
+                -f description="Copilot raised nothing" > /dev/null
+              gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
+              state=success
+            fi
+
+            # A failed merge (conflict, mergeability not computed yet) is retried next run.
+            if [ "$state" = success ]; then
+              gh pr merge "$pr" --merge --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
+            fi
+          done

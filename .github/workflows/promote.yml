@@ -42,8 +42,10 @@ jobs:
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: |
           set -euo pipefail
-          [ "$(gh pr view "$PR" --json headRefName,baseRefName --jq '.headRefName+"/"+.baseRefName')" = develop/master ] \
-            || { echo "Not a develop -> master PR."; exit 0; }
+          # A fork's develop isn't the develop checked out here, so same-repo only.
+          [ "$(gh pr view "$PR" --json headRefName,baseRefName,isCrossRepository \
+                --jq '.headRefName+"/"+.baseRefName+"/"+(.isCrossRepository|tostring)')" = develop/master/false ] \
+            || { echo "Not a develop -> master PR from this repo."; exit 0; }
 
           # ponytail: plain x.y.z only; pre-release tags would need real semver ordering.
           newer() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number)); process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>0?0:1)' "$1" "$2"; }
@@ -68,5 +70,6 @@ jobs:
           fi
 
           gh pr review "$PR" --approve --body "Version bumped: $current -> $version."
-          gh pr merge "$PR" --merge
+          # Only the commit whose version was checked above; a newer head gets its own run.
+          gh pr merge "$PR" --merge --match-head-commit "$(git rev-parse HEAD)"
           gh workflow run release.yml --ref master
