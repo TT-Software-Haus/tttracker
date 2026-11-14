@@ -3,6 +3,7 @@ import { PSM, createWorker, type Worker } from 'tesseract.js'
 import { parseTribeBanner } from './tribeNames'
 import { findBannerRect, type Rect } from './bannerRect'
 import { isTeammateView } from './duoView'
+import { mark } from '../stallWatch'
 import { findShopSlots } from './shopSlots'
 import { captureFrame } from './stream'
 
@@ -92,8 +93,14 @@ export async function readShopSlots(): Promise<ShopGeometry | undefined> {
   // The tavern sits in the top half, where findShopSlots looks.
   const frame = await captureFrame(720, 0.5)
   if (!frame) return undefined
+  const t = performance.now()
   const size = { width: frame.width, height: frame.height }
-  if (isTeammateView(frame.bgra, frame.width, frame.height)) return { slots: [], frame: size, teammateView: true }
+  const scanned = () => {
+    const ms = performance.now() - t
+    if (ms > 16) mark(`scanning the tavern took ${ms.toFixed(0)}ms`)
+  }
+  if (isTeammateView(frame.bgra, frame.width, frame.height)) return (scanned(), { slots: [], frame: size, teammateView: true })
   const slots = findShopSlots(frame.bgra, frame.width, frame.height)
+  scanned()
   return slots.length ? { slots, frame: size } : undefined
 }

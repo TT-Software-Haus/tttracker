@@ -1,4 +1,5 @@
 import { nativeCapture } from './native'
+import { mark } from '../stallWatch'
 
 /**
  * Frames of the Hearthstone window, from the Rust module in native/capture.
@@ -28,7 +29,10 @@ export async function captureFrame(height: number, fraction: number): Promise<Fr
   const cap = nativeCapture()
   if (!cap) return undefined
   try {
+    const t = performance.now()
     const f = cap.frame(Math.round(height), fraction)
+    const ms = performance.now() - t
+    if (ms > 16) mark(`capture at ${height} took ${ms.toFixed(0)}ms (${f ? 'a frame' : 'no frame yet'})`)
     if (!f) return undefined
     if (isBlack(f.bgra)) {
       // Capture "succeeding" with black frames is how a game that can't be
