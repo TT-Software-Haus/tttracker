@@ -66,6 +66,12 @@ pages; this one is the reasoning behind it.
   (31-35% of pixels on a real frame), yours has dark curtains (0-0.2%).
 - Known gap: when Hearthstone hides the tier shields (seen late in a game), no boxes.
 
+## The build sidebar
+
+- It only changes in the tavern. During combat it shows the tavern as you left it:
+  live combat data moved it about (the fighting board loses minions, the shop empties,
+  the round ticks over).
+
 ## Capture: three generations
 
 1. `desktopCapturer.getSources()` renders a thumbnail of every open window to return
