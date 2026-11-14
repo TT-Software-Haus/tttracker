@@ -2,3 +2,9 @@ node_modules/
 out/
 dist/
 *.log
+eng.traineddata
+tmp-*
+native/capture/target/
+native/capture.node
+PLAN.md
+TODO.md

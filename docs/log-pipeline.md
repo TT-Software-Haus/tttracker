@@ -61,12 +61,16 @@ Changes need a Hearthstone restart to take effect.
 
 ## Tailing — `logTail.ts`
 
-`new LogTail(path, onLines, intervalMs = 150)`.
+`new LogTail(path, onLines(lines, more), intervalMs = 150)`.
 
 Polling, not `fs.watch`: Hearthstone keeps the handle open and Windows change
-notifications are unreliable for it. Each poll stats the file, reads exactly
-`size - offset` bytes at an explicit offset, closes the handle, splits on `/\r?\n/`
-and keeps the trailing fragment in `partial` so only complete lines are delivered.
+notifications are unreliable for it. Each poll stats the file and reads up to its end
+at an explicit offset, **1MB at a time**, splitting on `/\r?\n/` and keeping the
+trailing fragment in `partial` so only complete lines are delivered. `more` is true on
+every chunk of a read but the last (which is always delivered, even empty), so the
+tracker treats a whole multi-chunk read as one catch-up. Chunks because a game in
+progress can be 58MB of log, and decoding it in one go blocked the main thread, which
+freezes the user's mouse (CLAUDE.md).
 Re-entrancy is guarded by a `busy` flag; all errors are warned and swallowed.
 
 Truncation is detected by `size < offset` (reset to 0). Note: a *rotated* file that is
@@ -76,7 +80,8 @@ practice a new game session means a new folder, which `Tracker.attachToLogs` cat
 `lastGameOffset(path)` finds the last
 `GameState.DebugPrintPower() - CREATE_GAME` in the file and returns the byte after the
 preceding newline, so attaching mid-session replays the current game and nothing else.
-No match → end of file (start live). Read failure → 0.
+It searches backwards a megabyte at a time (chunks overlap by the needle's length), so
+a 70MB log isn't read whole. No match → end of file (start live). Read failure → 0.
 
 ## The entity/tag model — `game/game.ts`
 

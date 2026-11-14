@@ -42,6 +42,8 @@ export interface BoardMinion {
   venomous?: boolean
   windfury?: boolean
   stealth?: boolean
+  /** Shop minions only: which tavern slot this is in, 1-based. */
+  pos?: number
 }
 
 export interface SimOdds {
@@ -110,13 +112,29 @@ export interface BgSnapshot {
   phase: 'none' | 'shop' | 'combat' | 'over'
   me?: LobbyPlayer
   lobby: LobbyPlayer[]
-  /** Tribes seen in the tavern / on boards this game. */
+  /** The lobby's tribes, read off the hero-select screen. */
   tribes: string[]
   /** Your current board (during shop: your warband; during combat: the fighting copy). */
   board: BoardMinion[]
+  /** Minions in your hand: bought, just not played yet. */
+  hand: BoardMinion[]
+  /** What's on offer in the tavern. Only populated during a shop phase. */
+  shop: BoardMinion[]
   combat?: CombatRound
   rounds: CombatRound[]
   placement?: number
+  /** The build being followed this game, if one was chosen. */
+  selectedBuild?: Build
+  /** Builds worth offering: set once after the hero is picked, cleared once answered. */
+  buildPrompt?: Build[]
+  /** Offer a way to pick a build from the overlays: the hero is in, nothing chosen, no prompt up. */
+  buildPickable?: boolean
+  /**
+   * Where to draw highlight boxes over the real game, relative to Hearthstone's
+   * client area. Empty unless a build is selected and one of its minions is on
+   * offer right now.
+   */
+  shopHighlights: { x: number; y: number; width: number; height: number; /** Only boxed because debugHighlights is on. */ debug?: boolean }[]
 }
 
 export interface BgMatch {
@@ -134,12 +152,63 @@ export interface BgMatch {
   combats: CombatRound[]
 }
 
+/** One step of a build: the board you want to have by a given turn. */
+export interface BuildTarget {
+  byTurn: number
+  /** Card ids, in the order they should sit on the board. At most 7. */
+  cardIds: string[]
+}
+
+/** A planned warband for one tribe, in stages. */
+export interface Build {
+  id: string
+  name: string
+  /**
+   * Tribe this build is for, e.g. 'MURLOC' — matched against the lobby's
+   * tribes. Empty means it isn't tied to one tribe (a Menagerie board), so it's
+   * offered in every lobby.
+   */
+  tribe: string
+  /** Ordered by byTurn, earliest first. */
+  targets: BuildTarget[]
+  /**
+   * Cards that support the build without being part of the target board —
+   * tempo picks, buff spells, the thing you hold for a tier. No turn attached.
+   */
+  addons?: string[]
+  /**
+   * Free text on how to play it. From HSReplay this is the comp's How to Play,
+   * with card names kept as `[[Name||dbfId]]` so they can be resolved for display.
+   */
+  description?: string
+  /** Set when the build was started from someone else's published comp. */
+  source?: { name: string; url: string }
+}
+
+/** A community composition from HSReplay's Battlegrounds comps list. */
+export interface Comp {
+  id: number
+  name: string
+  /** Race code, or '' for a comp that isn't tied to one tribe. */
+  tribe: string
+  summary: string
+  /** 1 = S, 2 = A, 3 = B. */
+  tier: number
+  difficulty: number
+  /** The comp's core minions, resolved to card ids we know about. */
+  cardIds: string[]
+  url: string
+}
+
 export interface OverlaySettings {
   enabled: boolean
   opacity: number
   scale: number
   showOdds: boolean
   showLobby: boolean
+  showBuild: boolean
+  /** Box every tavern minion, not just the build's, to check the box placement. */
+  debugHighlights: boolean
   /** When locked the overlays ignore the mouse (click-through). */
   locked: boolean
 }

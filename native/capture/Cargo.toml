@@ -1,0 +1,19 @@
+[package]
+name = "capture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+
+[dependencies]
+napi = { version = "3.16.2", default-features = false, features = ["napi6"] }
+napi-derive = "3.7.1"
+windows = { version = "0.62.2", features = ["Foundation", "Graphics", "Graphics_Capture", "Graphics_DirectX", "Graphics_DirectX_Direct3D11", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_WinRT_Direct3D11", "Win32_System_WinRT_Graphics_Capture"] }
+
+[build-dependencies]
+napi-build = "2.6.0"
