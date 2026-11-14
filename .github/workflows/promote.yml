@@ -1,7 +1,11 @@
-# A develop -> master PR merges only once package.json's version is above
-# master's. If it isn't, the bot asks; reply `/version x.y.z` on the PR and it
-# bumps develop, after which the PR's own run approves, merges and dispatches
-# the release.
+# The only way into master: a PR from this repo's develop, raised by a
+# maintainer, whose package.json version is above master's. The `promote`
+# status this posts is the required check on master's ruleset. Any other PR
+# into master is closed.
+#
+# If the version isn't bumped, the bot asks; a maintainer replies
+# `/version x.y.z` and it bumps develop, after which the PR's own run
+# approves, merges and dispatches the release.
 #
 # issue_comment runs this file from the default branch (develop), so it must
 # be on develop for `/version` to work.
@@ -10,7 +14,7 @@ name: Promote to master
 on:
   pull_request:
     branches: [master]
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, edited] # edited: retargeted onto master
   issue_comment:
     types: [created]
 
@@ -18,19 +22,21 @@ permissions:
   actions: write # dispatch release.yml
   contents: write
   pull-requests: write
+  statuses: write
 
 concurrency: promote-${{ github.event.pull_request.number || github.event.issue.number }}
 
 jobs:
   promote:
     if: >-
-      (github.event_name == 'pull_request' && github.head_ref == 'develop') ||
-      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/version') &&
-       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      github.event_name == 'pull_request' ||
+      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/version'))
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
+      MAINTAINERS: artman41 timothychell
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      COMMENTER: ${{ github.event.comment.user.login }}
       COMMENT: ${{ github.event.comment.body }} # via env, never interpolated into the script
     steps:
       - uses: actions/checkout@v4
@@ -42,10 +48,21 @@ jobs:
           ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
       - run: |
           set -euo pipefail
-          # A fork's develop isn't the develop checked out here, so same-repo only.
-          [ "$(gh pr view "$PR" --json headRefName,baseRefName,isCrossRepository \
-                --jq '.headRefName+"/"+.baseRefName+"/"+(.isCrossRepository|tostring)')" = develop/master/false ] \
-            || { echo "Not a develop -> master PR from this repo."; exit 0; }
+          maintainer() { [[ " $MAINTAINERS " == *" $1 "* ]]; }
+          read -r base head cross author pr_sha <<<"$(gh pr view "$PR" \
+            --json baseRefName,headRefName,isCrossRepository,author,headRefOid \
+            --jq '"\(.baseRefName) \(.headRefName) \(.isCrossRepository) \(.author.login) \(.headRefOid)"')"
+          [ "$base" = master ] || { echo "#$PR doesn't target master."; exit 0; }
+          sha=$(git rev-parse HEAD)
+          promote() { gh api "repos/$GITHUB_REPOSITORY/statuses/$pr_sha" -f state="$1" \
+                        -f context=promote -f description="$2" > /dev/null; }
+          reject() { promote failure "$1"; gh pr close "$PR" --comment "$1"; exit 0; }
+
+          # A fork's develop isn't the develop checked out here.
+          [ "$head/$cross" = develop/false ] || reject "Only this repo's develop can be merged into master."
+          maintainer "$author" || reject "Only maintainers ($MAINTAINERS) can raise develop -> master PRs."
+          # develop moved on since this run started; the newer push brings its own run.
+          [ "$pr_sha" = "$sha" ] || { echo "#$PR is at $pr_sha, develop at $sha."; exit 0; }
 
           # ponytail: plain x.y.z only; pre-release tags would need real semver ordering.
           newer() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number)); process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>0?0:1)' "$1" "$2"; }
@@ -53,10 +70,11 @@ jobs:
           version=$(node -p 'require("./package.json").version')
 
           if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
+            maintainer "$COMMENTER" || { gh pr comment "$PR" --body "Only maintainers ($MAINTAINERS) can set the version."; exit 0; }
             version=$(printf '%s\n' "$COMMENT" | head -n1 | sed -nE 's#^/version v?([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$#\1#p')
             if [ -z "$version" ] || ! newer "$version" "$current"; then
               gh pr comment "$PR" --body "Couldn't use that: reply \`/version x.y.z\` with a version above master's \`$current\`."
-              exit 1
+              exit 0
             fi
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -64,12 +82,16 @@ jobs:
             git commit -am "chore: bump version to $version"
             git push origin develop
             exit 0 # the push re-runs this on `synchronize`, which approves and merges
-          elif ! newer "$version" "$current"; then
-            gh pr comment "$PR" --body "The version hasn't been bumped: develop is \`$version\`, master is \`$current\`. Reply \`/version x.y.z\` to set the new version."
-            exit 1
           fi
 
+          if ! newer "$version" "$current"; then
+            promote failure "Version $version isn't above master's $current"
+            gh pr comment "$PR" --body "The version hasn't been bumped: develop is \`$version\`, master is \`$current\`. A maintainer can reply \`/version x.y.z\` to set the new version."
+            exit 0
+          fi
+
+          promote success "Version bumped: $current -> $version"
           gh pr review "$PR" --approve --body "Version bumped: $current -> $version."
           # Only the commit whose version was checked above; a newer head gets its own run.
-          gh pr merge "$PR" --merge --match-head-commit "$(git rev-parse HEAD)"
+          gh pr merge "$PR" --merge --match-head-commit "$sha"
           gh workflow run release.yml --ref master
