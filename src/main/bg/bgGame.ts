@@ -325,12 +325,25 @@ export class BgGame {
     return this.myHand().map((e) => this.toInput(e))
   }
 
+  /**
+   * A copy Hearthstone made for a fight (e.g. your teammate's hand), whose
+   * original is still in play or in a hand. A golden from a triple is also
+   * logged as a copy, of one of the three, but those have been set aside;
+   * dropping every copy lost goldens from your hand (seen live, after a restart:
+   * the tag arrives just after the card does).
+   */
+  private isFightCopy(e: Entity) {
+    const from = Number(e.tags.COPIED_FROM_ENTITY_ID ?? 0)
+    if (!from) return false
+    const zone = this.game.entities.get(from)?.tags.ZONE
+    return zone === 'HAND' || zone === 'PLAY'
+  }
+
   /** The minions in your own hand. */
   private myHand(): Entity[] {
     const me = this.game.friendlyPlayerId
     return [...this.game.entities.values()]
-      // Skip the copies Hearthstone makes for a fight (e.g. your teammate's hand).
-      .filter((e) => e.tags.CARDTYPE === 'MINION' && e.tags.ZONE === 'HAND' && this.game.controllerOf(e) === me && e.cardId && !e.tags.COPIED_FROM_ENTITY_ID && !this.combatCreated.includes(e))
+      .filter((e) => e.tags.CARDTYPE === 'MINION' && e.tags.ZONE === 'HAND' && this.game.controllerOf(e) === me && e.cardId && !this.isFightCopy(e) && !this.combatCreated.includes(e))
   }
 
   private pidOf(hero: Entity | undefined): number | undefined {
