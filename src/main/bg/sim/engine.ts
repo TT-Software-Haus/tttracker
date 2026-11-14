@@ -919,7 +919,7 @@ export function simulateMany(
   cards: CardSource,
   a: BoardInput,
   b: BoardInput,
-  opts: { iterations?: number; seed?: number; firstAttacker?: 0 | 1; skipStartOfCombat?: boolean; myHealth?: number; oppHealth?: number; timeBudgetMs?: number } = {},
+  opts: { iterations?: number; seed?: number; firstAttacker?: 0 | 1; skipStartOfCombat?: boolean; myHealth?: number; oppHealth?: number; timeBudgetMs?: number; damageCap?: number } = {},
 ): SimSummary {
   const iterations = opts.iterations ?? 5000
   const rng = mulberry32(opts.seed ?? (Math.random() * 2 ** 32) >>> 0)
@@ -937,14 +937,16 @@ export function simulateMany(
     if (opts.timeBudgetMs && n % 100 === 0 && Date.now() - t0 > opts.timeBudgetMs) break
     const c = new Combat(cards, rng, a, b, fxCache)
     const r = c.simulate({ firstAttacker: opts.firstAttacker, skipStartOfCombat: opts.skipStartOfCombat })
+    // The game caps the damage of one fight while its damage cap is on (see BgGame.damageCap).
+    const damage = opts.damageCap ? Math.min(r.damage, opts.damageCap) : r.damage
     if (r.winner === 0) {
       win++
-      dealt += r.damage
-      if (opts.oppHealth !== undefined && r.damage >= opts.oppHealth) lethalWin++
+      dealt += damage
+      if (opts.oppHealth !== undefined && damage >= opts.oppHealth) lethalWin++
     } else if (r.winner === 1) {
       loss++
-      taken += r.damage
-      if (opts.myHealth !== undefined && r.damage >= opts.myHealth) lethalLoss++
+      taken += damage
+      if (opts.myHealth !== undefined && damage >= opts.myHealth) lethalLoss++
     } else tie++
   }
   const unsupported = new Set<string>()

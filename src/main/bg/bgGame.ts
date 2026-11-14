@@ -634,6 +634,18 @@ export class BgGame {
     }
   }
 
+  /**
+   * The most damage one fight can do right now, if the game's cap is on. The game entity carries
+   * BACON_COMBAT_DAMAGE_CAP and _ENABLED. Seen in real logs: solo starts at 5, then 10 from turn 4
+   * and 15 from turn 8; Duos is 15 from the start; both switch it off late in the game. Over 80
+   * real fights, none did more than the cap while it was on, and 21 did exactly the cap.
+   */
+  private damageCap(): number | undefined {
+    const t = this.game.gameEntity()?.tags
+    if (t?.BACON_COMBAT_DAMAGE_CAP_ENABLED !== '1') return undefined
+    return Number(t.BACON_COMBAT_DAMAGE_CAP) || undefined
+  }
+
   private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
     return this.withEnchantIndex(() => this.simJobInner(round, opts))
   }
@@ -661,6 +673,7 @@ export class BgGame {
         skipStartOfCombat: opts.skipStartOfCombat,
         myHealth: myHp || undefined,
         oppHealth: oppHp || undefined,
+        damageCap: this.damageCap(),
       },
       partial: partialDuos,
     }

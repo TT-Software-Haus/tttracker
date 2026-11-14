@@ -16,6 +16,7 @@ simulateMany(cards, a: BoardInput, b: BoardInput, opts?: {
   myHealth?: number
   oppHealth?: number
   timeBudgetMs?: number
+  damageCap?: number       // the game's per-fight damage cap, while it's on (BgGame reads it)
 }): SimSummary
 ```
 

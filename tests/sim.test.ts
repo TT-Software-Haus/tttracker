@@ -52,6 +52,16 @@ describe('combat rules', () => {
     expect(r.avgDamageDealt).toBe(3 + 4)
   })
 
+  it('caps the damage of one fight while the game’s damage cap is on, lethal included', () => {
+    // Uncapped: 3 + 4 = 7 damage, lethal against 5 health. Capped at 5 it's still lethal; at 4 it isn't.
+    const opts = { iterations: 50, seed: 1, oppHealth: 5 }
+    expect(simulateMany(db(), board(3, v('BIG', 10, 10)), board(2, v('VAN', 2, 2)), opts).avgDamageDealt).toBe(7)
+    const at5 = simulateMany(db(), board(3, v('BIG', 10, 10)), board(2, v('VAN', 2, 2)), { ...opts, damageCap: 5 })
+    expect([at5.avgDamageDealt, at5.lethalWin]).toEqual([5, 1])
+    const at4 = simulateMany(db(), board(3, v('BIG', 10, 10)), board(2, v('VAN', 2, 2)), { ...opts, damageCap: 4 })
+    expect([at4.avgDamageDealt, at4.lethalWin]).toEqual([4, 0])
+  })
+
   it('mirror boards with no damage left tie', () => {
     const r = simulateMany(db(), board(1, v('VAN', 2, 2)), board(1, v('VAN', 2, 2)), { iterations: 200, seed: 1 })
     expect(r.tie).toBe(1)
