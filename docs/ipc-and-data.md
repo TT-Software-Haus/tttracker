@@ -79,6 +79,7 @@ Pure types, no runtime code. The contract between main, preload and renderer.
   lobby: LobbyPlayer[]
   tribes: string[]
   board: BoardMinion[]      // your warband in shop; the fighting copy in combat
+  hand: BoardMinion[]       // minions in your hand: bought, not played yet
   shop: BoardMinion[]       // tavern offerings, with pos; [] outside a shop phase
   combat?: CombatRound      // the live round, or the most recent one
   rounds: CombatRound[]

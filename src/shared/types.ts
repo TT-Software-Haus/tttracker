@@ -112,10 +112,12 @@ export interface BgSnapshot {
   phase: 'none' | 'shop' | 'combat' | 'over'
   me?: LobbyPlayer
   lobby: LobbyPlayer[]
-  /** Tribes seen in the tavern / on boards this game. */
+  /** The lobby's tribes, read off the hero-select screen. */
   tribes: string[]
   /** Your current board (during shop: your warband; during combat: the fighting copy). */
   board: BoardMinion[]
+  /** Minions in your hand: bought, just not played yet. */
+  hand: BoardMinion[]
   /** What's on offer in the tavern. Only populated during a shop phase. */
   shop: BoardMinion[]
   combat?: CombatRound

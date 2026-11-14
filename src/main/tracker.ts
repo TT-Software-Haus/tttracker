@@ -401,7 +401,8 @@ export class Tracker extends EventEmitter {
       for (const t of build.targets) for (const id of t.cardIds) wanted.add(id.replace(/_G$/, ''))
       for (const id of build.addons ?? []) wanted.add(id.replace(/_G$/, ''))
     }
-    const owned = new Set(base.board.map((m) => m.cardId.replace(/_G$/, '')))
+    // In hand counts: it's bought, just not played yet.
+    const owned = new Set([...base.board, ...base.hand].map((m) => m.cardId.replace(/_G$/, '')))
     const wants = (m: BoardMinion) => wanted.has(m.cardId.replace(/_G$/, '')) && !owned.has(m.cardId.replace(/_G$/, ''))
     // The debug setting boxes every minion on offer, so the placement can be
     // checked without waiting for a build's minion to turn up.

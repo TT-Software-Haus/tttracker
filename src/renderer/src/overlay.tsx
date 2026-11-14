@@ -157,7 +157,8 @@ function BuildOverlay({ snap }: { snap: BgSnapshot }) {
   const [tip, setTip] = useState<{ card: CardInfo; style: CSSProperties }>()
   if (!build) return null
   if (picking) return <BuildPicker snap={snap} onClose={() => setPicking(false)} />
-  const p = buildProgress(build, Math.max(1, snap.round), snap.board, snap.shop)
+  // In hand counts as bought: it's yours, just not played yet.
+  const p = buildProgress(build, Math.max(1, snap.round), [...snap.board, ...snap.hand], snap.shop)
   if (!p) return null
   const done = p.have === p.minions.length
   /**

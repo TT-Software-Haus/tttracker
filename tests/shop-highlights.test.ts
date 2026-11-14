@@ -26,7 +26,7 @@ vi.mock('../src/main/vision/gameWindow', () => ({
 describe('highlight boxes over the tavern', () => {
   const build: Build = { id: 'b', name: 'Mechs', tribe: 'MECHANICAL', targets: [{ byTurn: 8, cardIds: ['BRANN'] }] }
   const minion = (cardId: string, pos: number) => ({ cardId, name: cardId, atk: 1, health: 1, tier: 5, golden: false, pos })
-  const base = (shop: ReturnType<typeof minion>[]) => ({ phase: 'shop', board: [], shop }) as unknown as Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'>
+  const base = (shop: ReturnType<typeof minion>[]) => ({ phase: 'shop', board: [], hand: [], shop }) as unknown as Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'>
   const slot = (x: number) => ({ x, y: 100, width: 80, height: 120 })
   let root: string
   let tracker: any // private members are what's under test
@@ -49,6 +49,15 @@ describe('highlight boxes over the tavern', () => {
     // A settings change schedules a debounced save that can still be writing
     // into root, so retry rather than fail on ENOTEMPTY.
     await fs.rm(root, { recursive: true, force: true, maxRetries: 5 })
+  })
+
+  it('does not box a minion you already have in hand', async () => {
+    // In hand is bought, just not played yet.
+    screen.slots = [slot(100), slot(200), slot(300)]
+    const snap = { ...base([minion('A', 1), minion('BRANN', 3)]), hand: [minion('BRANN', 0)] }
+    tracker.refreshHighlights(snap, build)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights).toEqual([])
   })
 
   it('follows the card when the tavern shifts without the log changing', async () => {

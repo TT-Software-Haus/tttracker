@@ -322,10 +322,15 @@ export class BgGame {
       const summoned = new Set([...this.game.entities.values()].filter((e) => e.tags.ZONE === 'PLAY').map((e) => Number(e.tags.COPIED_FROM_ENTITY_ID ?? 0)))
       return (this.duoHands.get(pid) ?? []).filter((e) => !summoned.has(e.id)).map((e) => this.toInput(e))
     }
+    return this.myHand().map((e) => this.toInput(e))
+  }
+
+  /** The minions in your own hand. */
+  private myHand(): Entity[] {
+    const me = this.game.friendlyPlayerId
     return [...this.game.entities.values()]
       // Skip the copies Hearthstone makes for a fight (e.g. your teammate's hand).
       .filter((e) => e.tags.CARDTYPE === 'MINION' && e.tags.ZONE === 'HAND' && this.game.controllerOf(e) === me && e.cardId && !e.tags.COPIED_FROM_ENTITY_ID && !this.combatCreated.includes(e))
-      .map((e) => this.toInput(e))
   }
 
   private pidOf(hero: Entity | undefined): number | undefined {
@@ -606,6 +611,7 @@ export class BgGame {
       me,
       lobby,
       board: this.boardOf(this.game.friendlyPlayerId),
+      hand: this.myHand().map((e) => this.toBoardMinion(e)),
       shop: phase === 'shop' ? this.shopMinions() : [],
       combat: this.current ?? this.rounds[this.rounds.length - 1],
       rounds: this.rounds,
