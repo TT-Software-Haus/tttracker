@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { BgMatch, BgSnapshot, CardInfo, GameMode, Settings } from '../../shared/types'
+import type { BgMatch, BgSnapshot, BoardMinion, Build, CardInfo, GameMode, Settings } from '../../shared/types'
 
 export const TRIBES: Record<string, { label: string; color: string }> = {
   BEAST: { label: 'Beasts', color: '#c98a3c' },
@@ -86,6 +86,91 @@ export function useMatches() {
   return matches
 }
 
+/** Builds, with local state kept in step so editing doesn't round-trip through disk. */
+export function useBuilds() {
+  const [builds, setBuilds] = useState<Build[]>([])
+  useEffect(() => void window.api.builds().then(setBuilds), [])
+  const save = (b: Build) => {
+    setBuilds((cur) => (cur.some((x) => x.id === b.id) ? cur.map((x) => (x.id === b.id ? b : x)) : [...cur, b]))
+    void window.api.saveBuild(b)
+  }
+  const remove = (id: string) => {
+    setBuilds((cur) => cur.filter((b) => b.id !== id))
+    void window.api.deleteBuild(id)
+  }
+  return [builds, save, remove] as const
+}
+
+/** Builds split into those that fit this lobby's tribes (or any lobby) and the rest. */
+export function buildsByLobby(builds: Build[], tribes: string[]) {
+  const relevant = builds.filter((b) => !b.tribe || tribes.includes(b.tribe))
+  return [relevant, builds.filter((b) => !relevant.includes(b))] as const
+}
+
+export interface DescPart {
+  text: string
+  /** Set when this part names a card, from HSReplay's `[[Name||dbfId]]` links. */
+  dbfId?: number
+}
+
+/** A build description split into plain text and the cards it names. */
+export function parseCardLinks(text: string): DescPart[] {
+  const parts: DescPart[] = []
+  let last = 0
+  for (const m of text.matchAll(/\[\[([^\]|]+)\|\|(\d+)\]\]/g)) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index) })
+    parts.push({ text: m[1], dbfId: Number(m[2]) })
+    last = m.index + m[0].length
+  }
+  if (last < text.length) parts.push({ text: text.slice(last) })
+  return parts
+}
+
+/** Build stages, earliest turn first. The editor doesn't reorder while you type. */
+export function sortedTargets(b: Build) {
+  return [...b.targets].sort((x, y) => x.byTurn - y.byTurn)
+}
+
+/**
+ * Where you are against a build on a given turn: the stage you're working
+ * towards, and which of its minions you already have.
+ *
+ * The stage is the first one you haven't reached the deadline for; once every
+ * deadline has passed you stay on the last one rather than running out of
+ * advice. Golden copies count — a golden Tidecaller is still a Tidecaller, and
+ * telling someone they're missing a minion they tripled would be absurd.
+ */
+export function buildProgress(build: Build, round: number, board: BoardMinion[], shop: BoardMinion[] = []) {
+  const stages = sortedTargets(build)
+  const stage = stages.find((t) => t.byTurn >= round) ?? stages.at(-1)
+  if (!stage) return undefined
+  const owned = new Set(board.map((m) => baseCardId(m.cardId)))
+  const offered = new Set(shop.map((m) => baseCardId(m.cardId)))
+  const minions = stage.cardIds.map((cardId) => ({
+    cardId,
+    have: owned.has(baseCardId(cardId)),
+    // Worth shouting about: it's in the tavern now and you haven't got it.
+    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
+  }))
+  const addons = (build.addons ?? []).map((cardId) => ({
+    cardId,
+    have: owned.has(baseCardId(cardId)),
+    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
+  }))
+  return {
+    stage,
+    minions,
+    addons,
+    have: minions.filter((m) => m.have).length,
+    turnsLeft: stage.byTurn - round,
+    /** The last stage, i.e. there's nothing further to work towards. */
+    final: stage === stages.at(-1),
+  }
+}
+
+/** Golden minions carry a `_G` card id; they're the same minion for our purposes. */
+const baseCardId = (id: string) => id.replace(/_G$/, '')
+
 let poolCache: Promise<CardInfo[]> | undefined
 export function usePool() {
   const [pool, setPool] = useState<CardInfo[]>([])
@@ -129,4 +214,61 @@ export function placementStats(matches: BgMatch[]) {
   const top = matches.filter((m) => isTopHalf(m.placement, m.mode)).length
   const firsts = matches.filter((m) => m.placement === 1).length
   return { games: n, avg, topRate: n ? top / n : 0, firsts }
+}
+
+export interface TextPart {
+  text: string
+  bold: boolean
+  italic: boolean
+}
+
+/**
+ * Split card text into emphasis runs.
+ *
+ * Hearthstone already marks its keywords up — "<b>Battlecry:</b>", "<b>Taunt</b>" —
+ * so the information is there; it was being thrown away by stripping the tags.
+ * Returns parts rather than HTML so the caller renders real elements and
+ * nothing ever has to set innerHTML from card data.
+ *
+ * Depth counting rather than matching pairs, because the data nests: Bonus
+ * Keyword reads "<b><b>Bonus Keyword</b>s</b>", and a naive parser un-bolds
+ * the trailing "s".
+ */
+export function cardTextParts(raw: string | undefined): TextPart[] {
+  const text = (raw ?? '')
+    .replace(/\[x\]/g, '')
+    .replace(/\n/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!text) return []
+  const parts: TextPart[] = []
+  let bold = 0
+  let italic = 0
+  let buf = ''
+  const flush = () => {
+    if (buf) parts.push({ text: buf, bold: bold > 0, italic: italic > 0 })
+    buf = ''
+  }
+  const tag = /<(\/?)([a-zA-Z]+)[^>]*>/g
+  let last = 0
+  let m: RegExpExecArray | null
+  while ((m = tag.exec(text))) {
+    buf += text.slice(last, m.index)
+    flush()
+    const delta = m[1] === '/' ? -1 : 1
+    const name = m[2].toLowerCase()
+    if (name === 'b') bold = Math.max(0, bold + delta)
+    if (name === 'i') italic = Math.max(0, italic + delta)
+    last = m.index + m[0].length
+  }
+  buf += text.slice(last)
+  flush()
+  return parts
+}
+
+/** The same text with all markup removed, for searching and plain contexts. */
+export function cardTextPlain(raw: string | undefined): string {
+  return cardTextParts(raw)
+    .map((p) => p.text)
+    .join('')
 }

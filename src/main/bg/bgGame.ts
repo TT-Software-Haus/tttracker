@@ -13,6 +13,7 @@ import type { CardDb } from '../cards/cardDb'
 import type { Entity, Game, GameEvent } from '../game/game'
 import type { BgMatch, BgSnapshot, BoardMinion, CombatResult, CombatRound, GameMode, LobbyPlayer, SimOdds } from '../../shared/types'
 import { simulateMany, type BoardInput, type MinionInput } from './sim/engine'
+import type { SimJob, Simulator } from './sim/remote'
 import { randomUUID } from 'node:crypto'
 
 const on = (e: Entity, tag: string) => e.tags[tag] !== undefined && e.tags[tag] !== '0'
@@ -24,7 +25,6 @@ export function effectiveHealth(hero: Entity | undefined): number {
 }
 
 export class BgGame {
-  private tribes = new Set<string>()
   private rounds: CombatRound[] = []
   private current?: CombatRound
   private lastBoards = new Map<number, { round: number; minions: BoardMinion[] }>()
@@ -42,9 +42,23 @@ export class BgGame {
   private matchPending = false
   private pendingTimer?: NodeJS.Timeout
   simIterations = 5000
+  /**
+   * Runs sims elsewhere (main sets a worker thread). Without one they run here,
+   * synchronously, as the tests expect.
+   */
+  simulate?: Simulator
+  /** The newest sim started for each round: a resim's odds replace the first's. */
+  private simFor = new WeakMap<CombatRound, number>()
+  private simSeq = 0
 
   /** Called after a finished game; return value is stored as history. */
-  onMatchEnd?: (m: BgMatch) => void
+  /**
+   * The lobby's tribes aren't known here: they're read off the hero-select
+   * screen, so Tracker fills them in. Collecting them from the tavern's minions
+   * was dropped: a dual-tribe card (Demon/Naga) added a tribe that wasn't in
+   * the lobby, or even in the season.
+   */
+  onMatchEnd?: (m: Omit<BgMatch, 'tribes'>) => void
   /** Called whenever odds/results change (outside of the normal line batch). */
   onChange?: () => void
 
@@ -102,7 +116,6 @@ export class BgGame {
   }
 
   private reset() {
-    this.tribes.clear()
     this.rounds = []
     this.current = undefined
     this.lastBoards.clear()
@@ -138,7 +151,6 @@ export class BgGame {
         }
         return
       case 'created': {
-        this.noteTribes(e.entity)
         if (!this.isBattlegrounds || !this.inCombat) return
         const ent = e.entity
         // Before the first attack: Duos snapshot copies of all four warbands.
@@ -156,12 +168,6 @@ export class BgGame {
         if (e.blockType === 'ATTACK' && e.entity?.tags.CARDTYPE === 'HERO') this.onHeroAttackEnd()
         return
     }
-  }
-
-  private noteTribes(e: Entity) {
-    if (e.tags.IS_BACON_POOL_MINION !== '1') return
-    const card = this.cards.get(e.cardId)
-    for (const r of card?.races ?? []) if (r !== 'ALL') this.tribes.add(r)
   }
 
   private updatePlacement() {
@@ -184,7 +190,6 @@ export class BgGame {
   private onTag(e: Entity, tag: string, value: string, prev: string | undefined) {
     if (!this.isBattlegrounds) return
     if (tag === 'PLAYER_LEADERBOARD_PLACE' && this.game.phase === 'over') this.updatePlacement()
-    if (tag === 'IS_BACON_POOL_MINION') this.noteTribes(e)
     if (e.id === this.game.gameEntityId) {
       if (tag === 'TURN' && Number(value) % 2 === 1) this.finishCombat()
       if (tag === 'TURN' && Number(value) % 2 === 0) {
@@ -224,7 +229,7 @@ export class BgGame {
       // A teammate's warband has come in: re-run from the current position.
       this.resimPending = false
       this.captureBoards(this.current, false)
-      this.current.odds = this.runSim(this.current, { firstAttacker: first, skipStartOfCombat: true })
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true })
       this.onChange?.()
     }
   }
@@ -250,7 +255,7 @@ export class BgGame {
     this.current = round
     this.rounds.push(round)
     this.resimPending = false
-    round.odds = this.runSim(round, { firstAttacker, skipStartOfCombat: true })
+    this.simulateInto(round, { firstAttacker, skipStartOfCombat: true })
     this.onChange?.()
   }
 
@@ -326,10 +331,28 @@ export class BgGame {
       const summoned = new Set([...this.game.entities.values()].filter((e) => e.tags.ZONE === 'PLAY').map((e) => Number(e.tags.COPIED_FROM_ENTITY_ID ?? 0)))
       return (this.duoHands.get(pid) ?? []).filter((e) => !summoned.has(e.id)).map((e) => this.toInput(e))
     }
+    return this.myHand().map((e) => this.toInput(e))
+  }
+
+  /**
+   * A copy Hearthstone made for a fight (e.g. your teammate's hand), whose
+   * original is still in play or in a hand. A golden from a triple is also
+   * logged as a copy, of one of the three, but those have been set aside;
+   * dropping every copy lost goldens from your hand (seen live, after a restart:
+   * the tag arrives just after the card does).
+   */
+  private isFightCopy(e: Entity) {
+    const from = Number(e.tags.COPIED_FROM_ENTITY_ID ?? 0)
+    if (!from) return false
+    const zone = this.game.entities.get(from)?.tags.ZONE
+    return zone === 'HAND' || zone === 'PLAY'
+  }
+
+  /** The minions in your own hand. */
+  private myHand(): Entity[] {
+    const me = this.game.friendlyPlayerId
     return [...this.game.entities.values()]
-      // Skip the copies Hearthstone makes for a fight (e.g. your teammate's hand).
-      .filter((e) => e.tags.CARDTYPE === 'MINION' && e.tags.ZONE === 'HAND' && this.game.controllerOf(e) === me && e.cardId && !e.tags.COPIED_FROM_ENTITY_ID && !this.combatCreated.includes(e))
-      .map((e) => this.toInput(e))
+      .filter((e) => e.tags.CARDTYPE === 'MINION' && e.tags.ZONE === 'HAND' && this.game.controllerOf(e) === me && e.cardId && !this.isFightCopy(e) && !this.combatCreated.includes(e))
   }
 
   private pidOf(hero: Entity | undefined): number | undefined {
@@ -430,6 +453,46 @@ export class BgGame {
     return this.minionEntities(controller).map((e) => this.toBoardMinion(e))
   }
 
+  /**
+   * How many cards are on offer in the tavern, spells included. Checked
+   * against a live log: tavern spells (CARDTYPE BATTLEGROUND_SPELL) sit in the
+   * same PLAY zone as the offered minions, each with its own ZONE_POSITION.
+   * The highlight boxes use this to check the screen agrees before drawing.
+   */
+  tavernSize(): number {
+    const dummy = this.dummyPlayerId()
+    if (dummy === undefined) return 0
+    return [...this.game.entities.values()].filter(
+      (e) =>
+        e.tags.ZONE === 'PLAY' &&
+        (e.tags.CARDTYPE === 'MINION' || e.tags.CARDTYPE === 'BATTLEGROUND_SPELL') &&
+        Number(e.tags.ZONE_POSITION ?? 0) > 0 &&
+        this.game.controllerOf(e) === dummy,
+    ).length
+  }
+
+  /**
+   * What's on offer in the tavern right now.
+   *
+   * During a shop phase the offerings sit in the *other* player's PLAY zone —
+   * the same slot that holds the opponent's warband during a fight. Verified
+   * against a real log: four pool minions early in the shop, two by the end
+   * (the missing pair having been bought and appeared on my own board), and
+   * none at all once combat starts. Only ever call this during 'shop'.
+   *
+   * Not only pool minions (IS_BACON_POOL_MINION): seen live, a token created
+   * into the tavern (Dark Paradox, BG36_360t3) is on offer without that tag,
+   * and got no box. Same rule as tavernSize(): a minion with a slot.
+   */
+  private shopMinions(): BoardMinion[] {
+    return this.minionEntities(this.dummyPlayerId())
+      .filter((e) => Number(e.tags.ZONE_POSITION ?? 0) > 0)
+      // The slot a card sits in on screen. Kept because the tavern can also
+      // hold spells, which take a slot without being minions — so counting
+      // minions left-to-right would point at the wrong card.
+      .map((e) => ({ ...this.toBoardMinion(e), pos: Number(e.tags.ZONE_POSITION ?? 0) }))
+  }
+
   private simInput(controller: number | undefined): BoardInput {
     const hero = this.fightingHero(controller)
     const pid = hero ? Number(hero.tags.PLAYER_ID ?? 0) : 0
@@ -465,7 +528,39 @@ export class BgGame {
     }
   }
 
-  private runSim(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): SimOdds | undefined {
+  /** Fill in the round's odds: now, or when the sim worker answers. */
+  private simulateInto(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }) {
+    const job = this.simJob(round, opts)
+    if (!job) return
+    const { partial, ...sim } = job
+    if (!this.simulate) {
+      round.odds = this.runSim(sim, partial)
+      return
+    }
+    const seq = ++this.simSeq
+    this.simFor.set(round, seq)
+    this.simulate(sim).then(
+      (odds) => {
+        if (this.simFor.get(round) !== seq) return // a resim replaced it
+        round.odds = partial ? { ...odds, partial: true } : odds
+        this.onChange?.()
+      },
+      (err) => console.error('Simulation failed', err),
+    )
+  }
+
+  private runSim(job: SimJob, partial: boolean): SimOdds | undefined {
+    try {
+      const odds: SimOdds = simulateMany(this.cards, job.a, job.b, job.opts)
+      if (partial) odds.partial = true
+      return odds
+    } catch (err) {
+      console.error('Simulation failed', err)
+      return undefined
+    }
+  }
+
+  private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
     const me = this.game.friendlyPlayerId
     const dummy = this.dummyPlayerId()
     const a = this.simInput(me)
@@ -478,20 +573,18 @@ export class BgGame {
     const partialDuos = this.reserveUnknown('me') || this.reserveUnknown('opp')
     const myHp = effectiveHealth(this.myLobbyHero())
     const oppHp = effectiveHealth(this.lobbyHero(round.opponentPlayerId))
-    try {
-      const odds: SimOdds = simulateMany(this.cards, a, b, {
+    return {
+      a,
+      b,
+      opts: {
         iterations: this.simIterations,
         timeBudgetMs: 400,
         firstAttacker: opts.firstAttacker,
         skipStartOfCombat: opts.skipStartOfCombat,
         myHealth: myHp || undefined,
         oppHealth: oppHp || undefined,
-      })
-      if (partialDuos) odds.partial = true
-      return odds
-    } catch (err) {
-      console.error('Simulation failed', err)
-      return undefined
+      },
+      partial: partialDuos,
     }
   }
 
@@ -559,7 +652,8 @@ export class BgGame {
 
   // ------------------------------------------------------------ output
 
-  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail'> {
+  /** Everything the log can tell us. Screen-derived fields are the Tracker's. */
+  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights' | 'tribes'> {
     const lobby = this.lobby()
     const me = lobby.find((p) => p.isMe)
     const phase: BgSnapshot['phase'] = this.game.phase === 'over' ? 'over' : !this.game.inGame ? 'none' : this.inCombat ? 'combat' : 'shop'
@@ -569,8 +663,9 @@ export class BgGame {
       phase,
       me,
       lobby,
-      tribes: [...this.tribes].sort(),
       board: this.boardOf(this.game.friendlyPlayerId),
+      hand: this.myHand().map((e) => this.toBoardMinion(e)),
+      shop: phase === 'shop' ? this.shopMinions() : [],
       combat: this.current ?? this.rounds[this.rounds.length - 1],
       rounds: this.rounds,
       placement: this.placement,
@@ -592,7 +687,6 @@ export class BgGame {
       heroName: this.cards.get(me.cardId)?.name ?? me.cardId,
       placement: this.placement ?? 0,
       rounds: this.round,
-      tribes: [...this.tribes].sort(),
       finalBoard: lastMine?.myBoard ?? this.boardOf(this.game.friendlyPlayerId),
       teammateHeroCardId: mate?.cardId,
       combats: this.rounds,

@@ -1,8 +1,9 @@
 # Hearth Tracker — developer docs
 
 A Hearthstone **Battlegrounds** tracker: Electron + React + TypeScript, with its own
-combat simulator. It reads Hearthstone's `Power.log` only — no memory reading, no
-injection, no process hooks.
+combat simulator. It reads Hearthstone's `Power.log`, plus the game window's pixels for
+what the log can't say (the lobby's tribes, where tavern cards sit) — no memory
+reading, no injection.
 
 Windows only. The install discovery, config paths and process checks all use
 `reg.exe`, `tasklist`, `%LOCALAPPDATA%` and backslash paths; there is no macOS branch.
@@ -19,6 +20,7 @@ Windows only. The install discovery, config paths and process checks all use
 | [ui.md](ui.md) | Renderer pages, shared components, the two overlay windows, styling |
 | [development.md](development.md) | Scripts, build config, tests, fixtures, coverage tooling, known rough edges |
 | [api-reference.md](api-reference.md) | Every exported symbol, by module, plus the game-tag reference |
+| [decisions.md](decisions.md) | Why things are the way they are: decisions and what real games overturned |
 | [diagrams.md](diagrams.md) | Ten Mermaid diagrams: modules, line-to-UI flow, round lifecycle, combat loop, IPC map, Duos grouping |
 
 ## One-paragraph version

@@ -56,8 +56,10 @@ describe('Battlegrounds Duos replay', () => {
     expect(seen.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('collects the tribes seen in the lobby', () => {
-    expect(snap.tribes).toEqual(expect.arrayContaining(['DEMON', 'QUILBOAR']))
+  it('takes no tribes from the tavern', () => {
+    // Seen live: a Demon/Naga card added Naga, which wasn't in the lobby or
+    // the season. Tribes come from the hero-select screen only (Tracker).
+    expect(snap).not.toHaveProperty('tribes')
   })
 
   it('ends your game when you are knocked out, saves it, and resets for the next one', () => {

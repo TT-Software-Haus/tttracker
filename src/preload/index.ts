@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BgMatch, BgSnapshot, CardInfo, Settings, SetupStatus } from '../shared/types'
+import type { BgMatch, BgSnapshot, Build, CardInfo, Comp, Settings, SetupStatus } from '../shared/types'
+import type { Decoded } from '../main/buildCode'
+import type { CompDetail } from '../main/comps'
 
 function subscribe<T>(channel: string, fn: (payload: T) => void) {
   const handler = (_e: unknown, payload: T) => fn(payload)
@@ -12,17 +14,31 @@ const api = {
   onSnapshot: (fn: (s: BgSnapshot) => void) => subscribe('tracker:snapshot', fn),
   onDataChanged: (fn: () => void) => subscribe('data:changed', fn),
   onSettingsChanged: (fn: (s: Settings) => void) => subscribe('settings:changed', fn),
+  /** Overlays only: how much to zoom, from the game window's size and the Size setting. */
+  onOverlayZoom: (fn: (zoom: number) => void) => subscribe('overlay:zoom', fn),
 
   setupStatus: (): Promise<SetupStatus> => ipcRenderer.invoke('setup:status'),
   fixLogConfig: (): Promise<void> => ipcRenderer.invoke('setup:fixLogConfig'),
   browseInstall: (): Promise<string | undefined> => ipcRenderer.invoke('setup:browse'),
 
   matches: (): Promise<BgMatch[]> => ipcRenderer.invoke('matches:list'),
-  deleteMatch: (id: string): Promise<void> => ipcRenderer.invoke('matches:delete', id),  pool: (): Promise<CardInfo[]> => ipcRenderer.invoke('cards:pool'),
+  deleteMatch: (id: string): Promise<void> => ipcRenderer.invoke('matches:delete', id),
+  pool: (): Promise<CardInfo[]> => ipcRenderer.invoke('cards:pool'),
+
+  builds: (): Promise<Build[]> => ipcRenderer.invoke('builds:list'),
+  saveBuild: (b: Build): Promise<void> => ipcRenderer.invoke('builds:save', b),
+  deleteBuild: (id: string): Promise<void> => ipcRenderer.invoke('builds:delete', id),
+  selectBuild: (id: string | null): Promise<void> => ipcRenderer.invoke('builds:select', id),
+  comps: (): Promise<Comp[]> => ipcRenderer.invoke('comps:list'),
+  compDetail: (url: string): Promise<CompDetail> => ipcRenderer.invoke('comps:detail', url),
+  exportBuild: (id: string): Promise<string> => ipcRenderer.invoke('builds:export', id),
+  importBuild: (code: string): Promise<Decoded> => ipcRenderer.invoke('builds:import', code),
 
   settings: (): Promise<Settings> => ipcRenderer.invoke('settings:get'),
   updateSettings: (patch: Partial<Settings>): Promise<Settings> => ipcRenderer.invoke('settings:update', patch),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke('app:openExternal', url),
+  /** Overlays only: take clicks while the pointer is over a button. */
+  setInteractive: (on: boolean): Promise<void> => ipcRenderer.invoke('overlay:interactive', on),
 }
 
 export type Api = typeof api
