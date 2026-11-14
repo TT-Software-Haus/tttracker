@@ -194,7 +194,8 @@ While a wanted minion (or, with *Debug minion highlight*, any minion) is on offe
 `Tracker.readHighlights` reads the tavern 0.25s after the tavern changes, then every
 0.25s until the boxes have stayed put for four reads in a row (about a second; a slide
 can start a moment after the log changes). It then stops until the tavern changes
-again. The log can't say where cards *are*, only which slot they're in, so the screen is
+again; other snapshots don't restart it (a freeze publishes one while the cards hop,
+and a read then put the boxes mid-hop). The log can't say where cards *are*, only which slot they're in, so the screen is
 the authority on position. Any change to what's on offer clears the boxes
 at once. A captured frame is the visible window, title bar included (DWM's extended
 frame bounds), while the boxes are drawn over the client area, so `gameWindow.ts`

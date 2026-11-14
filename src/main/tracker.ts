@@ -137,6 +137,8 @@ export class Tracker extends EventEmitter {
   private highlightKey = ''
   /** Reads in a row that put the boxes where they already were. */
   private highlightSameReads = 0
+  /** The tavern the boxes settled on; the loop stays stopped until it changes. */
+  private highlightSettledKey = ''
   /** Wanted minions on offer right now, for the polling loop to box. */
   private highlightTargets: (BoardMinion & { debug: boolean })[] = []
   /** True while the loop is running, including mid-capture when no timer is set. */
@@ -439,8 +441,12 @@ export class Tracker extends EventEmitter {
       this.highlightTargets = targets
       this.highlights = []
       this.highlightSameReads = 0
+      this.highlightSettledKey = ''
     }
-    if (targets.length && !this.highlightLoop) {
+    // Not again once settled: this runs on every publish, and a freeze (seen
+    // live) publishes while the cards do a little hop, so a restarted loop's
+    // read caught them mid-hop and the boxes jumped there and back.
+    if (targets.length && !this.highlightLoop && key !== this.highlightSettledKey) {
       this.highlightLoop = true
       this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_SETTLE_MS)
     }
@@ -493,7 +499,10 @@ export class Tracker extends EventEmitter {
     } finally {
       // ponytail: a game window moved or resized after placing keeps its old
       // boxes until the tavern next changes; poll again here if that matters.
-      if (placed && key === this.highlightKey) this.highlightLoop = false
+      if (placed && key === this.highlightKey) {
+        this.highlightLoop = false
+        this.highlightSettledKey = key
+      }
       else if (this.highlightTargets.length) this.highlightTimer = setTimeout(() => void this.readHighlights(), HIGHLIGHT_POLL_MS)
       else {
         this.highlightLoop = false

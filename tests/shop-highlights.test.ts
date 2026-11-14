@@ -81,6 +81,12 @@ describe('highlight boxes over the tavern', () => {
     expect(screen.reads).toBe(5) // placed, then the same four times
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
 
+    // Seen live: a freeze publishes a snapshot while the cards hop. The tavern
+    // hasn't changed, so that mustn't start the reads again.
+    tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(screen.reads).toBe(5)
+
     tracker.refreshHighlights(base([minion('BRANN', 2)]), build)
     await vi.advanceTimersByTimeAsync(10_000)
     expect(screen.reads).toBe(10)
