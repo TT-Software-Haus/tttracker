@@ -154,9 +154,11 @@ replacement, a hidden window streaming the game through `getDisplayMedia`, copie
 whole video frame from the GPU per read. With the boxes on and a read every second, the
 user's mouse froze at random moments.
 
-**Lobby tribes, before the first shop.** Hearthstone writes no `IS_BACON_POOL_MINION`
-markers before the hero is locked in, and some tribes don't show up in the log until
-round 2. The hero-select screen lists them all in a text banner (Hearthstone's font,
+**Lobby tribes, from the screen only.** The log has no tribe list. Collecting tribes
+from the pool minions that turn up (`IS_BACON_POOL_MINION`) was dropped: nothing shows
+before the hero is picked, some tribes only appear in round 2, and a dual-tribe card (a
+Demon/Naga) added Naga to a lobby, and a season, that had none. The hero-select screen
+lists them all in a text banner (Hearthstone's font,
 not icons). So from the moment heroes are offered (`BACON_HERO_CAN_BE_DRAFTED`),
 `Tracker` polls `readLobbyTribes()` every 2.5 s, up to 12 times, stopping once the hero
 is picked:
@@ -169,8 +171,9 @@ is picked:
 3. `parseTribeBanner` maps each word to the nearest tribe by Levenshtein, with the
    allowance scaled to word length; non-tribe words are dropped.
 
-Results accumulate across attempts and are merged with the log's tribes in the
-snapshot. An empty read means "don't know", so a failure falls back to the log.
+Results accumulate across attempts and are the snapshot's `tribes`, and they're saved
+with the match. An empty read means "don't know": a failed read, or a tracker started
+after hero select, leaves the lobby's tribes unknown.
 The tesseract worker is created lazily and its ~5 MB language data is cached in
 `userData/carddata/` (tesseract.js defaults to the working directory, which is wrong
 for a packaged app).

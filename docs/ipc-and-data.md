@@ -90,8 +90,8 @@ Pure types, no runtime code. The contract between main, preload and renderer.
 }
 ```
 
-`tribes` is the log's tribe list merged with the ones OCR'd off the hero-select
-screen (see [architecture.md](architecture.md#screen-reading--srcmainvision)).
+`tribes` are the ones OCR'd off the hero-select screen, the only source (see
+[architecture.md](architecture.md#screen-reading--srcmainvision)).
 `selectedBuild`, `buildPrompt`, `buildPickable` and `shopHighlights` are filled in by `Tracker`, not
 `BgGame` — they come from user choice and the screen, not the log.
 

@@ -103,7 +103,11 @@ export class Tracker extends EventEmitter {
   }
   private logConfigOk = false
   private lastSnapshot?: BgSnapshot
-  /** Tribes read off the hero-select screen; merged with the ones the log reveals later. */
+  /**
+   * The lobby's tribes, read off the hero-select screen: the only source. The
+   * tavern's minions were dropped as one (a Demon/Naga card added Naga, which
+   * isn't even in the season), so a tracker started after hero select knows none.
+   */
   private screenTribes: string[] = []
   /**
    * In Battlegrounds the mulligan *is* the hero choice, so MULLIGAN_STATE=DONE
@@ -151,7 +155,9 @@ export class Tracker extends EventEmitter {
     this.bg.onChange = () => this.schedulePublish()
     this.bg.onMatchEnd = (m) => {
       if (this.endedDuringReplay) return // finished before we started watching; avoid duplicates
-      this.store.addMatch(m)
+      // Saved 4s after the game ends, long before the next hero select resets
+      // the screen tribes.
+      this.store.addMatch({ ...m, tribes: this.screenTribes })
       this.emit('data')
     }
     this.game.on((e) => {
@@ -385,7 +391,7 @@ export class Tracker extends EventEmitter {
    * offer clears the boxes at once, so a stale box never sits on the wrong
    * card while the next read is pending.
    */
-  private refreshHighlights(base: Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'>, build: Build | undefined) {
+  private refreshHighlights(base: Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights' | 'tribes'>, build: Build | undefined) {
     const wanted = new Set<string>()
     if (build) {
       for (const t of build.targets) for (const id of t.cardIds) wanted.add(id.replace(/_G$/, ''))
@@ -513,7 +519,7 @@ export class Tracker extends EventEmitter {
     } else {
       status = 'in-game'
     }
-    const tribes = this.screenTribes.length ? [...new Set([...base.tribes, ...this.screenTribes])].sort() : base.tribes
+    const tribes = this.screenTribes
     const selectedBuild = this.store.builds.find((b) => b.id === this.selectedBuildId)
     const inCombat = base.phase === 'combat'
     const buildPrompt = buildsToOffer(this.store.builds, tribes, {

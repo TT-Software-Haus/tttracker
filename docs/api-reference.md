@@ -446,7 +446,7 @@ itself (Hearthstone prints symbolic names for known tags and bare numbers for th
 | `TAUNT`, `DIVINE_SHIELD`, `REBORN`, `VENOMOUS`, `POISONOUS`, `WINDFURY`, `MEGA_WINDFURY`, `STEALTH` | `toBoardMinion`, `toInput` | Keyword flags handed to the simulator |
 | `COPIED_FROM_ENTITY_ID` | `groupDuoBoards`, `handFor` | Maps a combat copy back to the real minion |
 | `BACON_DUMMY_PLAYER` | `Game.detectFriendly`, `BgGame.isBattlegrounds` | The opponent-hosting dummy; the *other* player is you |
-| `IS_BACON_POOL_MINION` | `BgGame.noteTribes` | Which tribes are in this lobby |
+| `IS_BACON_POOL_MINION` | `BgGame` shop reading | Which of the dummy's minions are the tavern on offer (not the lobby's tribes: see architecture.md) |
 | `PLAYER_TECH_LEVEL` | `BgGame.lobby`, `simInput` | Tavern tier (hero damage contribution) |
 | `PLAYER_TRIPLES` | `BgGame.lobby` | Triple counter shown in the lobby |
 | `PLAYER_LEADERBOARD_PLACE` | `lobbyHeroes`, `updatePlacement` | Distinguishes lobby heroes from combat copies; final placement |

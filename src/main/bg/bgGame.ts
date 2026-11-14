@@ -24,7 +24,6 @@ export function effectiveHealth(hero: Entity | undefined): number {
 }
 
 export class BgGame {
-  private tribes = new Set<string>()
   private rounds: CombatRound[] = []
   private current?: CombatRound
   private lastBoards = new Map<number, { round: number; minions: BoardMinion[] }>()
@@ -44,7 +43,13 @@ export class BgGame {
   simIterations = 5000
 
   /** Called after a finished game; return value is stored as history. */
-  onMatchEnd?: (m: BgMatch) => void
+  /**
+   * The lobby's tribes aren't known here: they're read off the hero-select
+   * screen, so Tracker fills them in. Collecting them from the tavern's minions
+   * was dropped: a dual-tribe card (Demon/Naga) added a tribe that wasn't in
+   * the lobby, or even in the season.
+   */
+  onMatchEnd?: (m: Omit<BgMatch, 'tribes'>) => void
   /** Called whenever odds/results change (outside of the normal line batch). */
   onChange?: () => void
 
@@ -102,7 +107,6 @@ export class BgGame {
   }
 
   private reset() {
-    this.tribes.clear()
     this.rounds = []
     this.current = undefined
     this.lastBoards.clear()
@@ -138,7 +142,6 @@ export class BgGame {
         }
         return
       case 'created': {
-        this.noteTribes(e.entity)
         if (!this.isBattlegrounds || !this.inCombat) return
         const ent = e.entity
         // Before the first attack: Duos snapshot copies of all four warbands.
@@ -156,12 +159,6 @@ export class BgGame {
         if (e.blockType === 'ATTACK' && e.entity?.tags.CARDTYPE === 'HERO') this.onHeroAttackEnd()
         return
     }
-  }
-
-  private noteTribes(e: Entity) {
-    if (e.tags.IS_BACON_POOL_MINION !== '1') return
-    const card = this.cards.get(e.cardId)
-    for (const r of card?.races ?? []) if (r !== 'ALL') this.tribes.add(r)
   }
 
   private updatePlacement() {
@@ -184,7 +181,6 @@ export class BgGame {
   private onTag(e: Entity, tag: string, value: string, prev: string | undefined) {
     if (!this.isBattlegrounds) return
     if (tag === 'PLAYER_LEADERBOARD_PLACE' && this.game.phase === 'over') this.updatePlacement()
-    if (tag === 'IS_BACON_POOL_MINION') this.noteTribes(e)
     if (e.id === this.game.gameEntityId) {
       if (tag === 'TURN' && Number(value) % 2 === 1) this.finishCombat()
       if (tag === 'TURN' && Number(value) % 2 === 0) {
@@ -599,7 +595,7 @@ export class BgGame {
   // ------------------------------------------------------------ output
 
   /** Everything the log can tell us. Screen-derived fields are the Tracker's. */
-  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights'> {
+  snapshot(): Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights' | 'tribes'> {
     const lobby = this.lobby()
     const me = lobby.find((p) => p.isMe)
     const phase: BgSnapshot['phase'] = this.game.phase === 'over' ? 'over' : !this.game.inGame ? 'none' : this.inCombat ? 'combat' : 'shop'
@@ -609,7 +605,6 @@ export class BgGame {
       phase,
       me,
       lobby,
-      tribes: [...this.tribes].sort(),
       board: this.boardOf(this.game.friendlyPlayerId),
       shop: phase === 'shop' ? this.shopMinions() : [],
       combat: this.current ?? this.rounds[this.rounds.length - 1],
@@ -633,7 +628,6 @@ export class BgGame {
       heroName: this.cards.get(me.cardId)?.name ?? me.cardId,
       placement: this.placement ?? 0,
       rounds: this.round,
-      tribes: [...this.tribes].sort(),
       finalBoard: lastMine?.myBoard ?? this.boardOf(this.game.friendlyPlayerId),
       teammateHeroCardId: mate?.cardId,
       combats: this.rounds,
