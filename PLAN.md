@@ -508,3 +508,89 @@ look found: the overlays lagged a dragged window (the follow poll went from
 window had been (the highlight layer now moves in the same loop). Scaling to
 0.6 then cut the lobby list short, because CSS zoom doesn't adjust `vh`; the
 overlay styles use a zoom-corrected `--vh`.
+
+---
+
+# Follow-up — native capture in Rust
+
+Asked for 2026-11-14. With debug highlighting on, the user's mouse froze at
+random moments. A 30-minute trace (1s CPU, ~6s GPU samples) showed nothing from
+the tracker above ~3% CPU or measurable GPU, so the freeze is short and
+system-wide. The suspect: every read draws a whole video frame into a
+CPU-backed canvas (`willReadFrequently`), which forces a GPU→CPU copy of the
+full frame and makes the GPU stop and wait. A first fix (stop polling once the
+boxes have settled, uncommitted) cuts the number of reads; this follow-up cuts
+the cost of each one.
+
+## Decisions taken
+
+- **Both reads move to Rust** (tavern boxes and hero-select tribe OCR). The
+  hidden capture window, `capture.ts`, and the `getDisplayMedia` handler are
+  deleted.
+- **Crates:** `napi`, `napi-derive`, `napi-build` for the binding; Microsoft's
+  `windows` for Windows Graphics Capture (WGC) and Direct3D 11. No npm
+  additions. Built with `cargo build --release` into a `.node` file. Node-API is
+  ABI-stable, so there's no rebuild per Electron version.
+- **Build:** `npm run dev`/`build`/`dist` run the cargo build first; the
+  `.node` is gitignored; electron-builder unpacks it from the asar. Building
+  the app now needs Rust (already installed here).
+- **No fallback.** If the module fails to load or capture: no boxes, no screen
+  tribes (the log still supplies tribes), one warning logged.
+- **Detectors and callers unchanged.** `stream.ts` keeps `captureFrame(height)`
+  and `stopCapture()`. They now call Rust, which returns the same BGRA frame at
+  the requested height, with only the rows the detectors scan filled in: the
+  top half for the tavern, the top 40% for the banner. Only those rows are
+  copied off the GPU.
+
+## How the Rust side works
+
+One WGC session on the Hearthstone window (found by title, like
+`gameWindow.ts`), with a free-threaded frame pool, so no message loop or
+dispatcher is needed. It's opened on first read, and closed by `stopCapture()`
+or when the window goes away. The yellow capture border is turned off where
+Windows allows. A read takes the latest frame and copies only the wanted rows
+(`CopySubresourceRegion`) into a strip-sized staging texture. It maps that,
+scales it down to the requested height on the CPU (box filter), and returns it.
+
+## Milestones
+
+### M16 — Rust module skeleton, wired into the build
+
+`native/capture/` (a cdylib crate) exporting a trivial function, the cargo step
+in the npm scripts, a copy to a fixed path, a loader in main that warns once on
+failure, and electron-builder `asarUnpack`.
+
+**Verify:** `npm run dev` builds the crate and main calls the function. Tests
+and typecheck pass.
+
+### M17 — WGC strip capture in Rust
+
+`open()`, `frame(height, fraction)` → `{ width, height, bgra }`, `close()`, as
+above.
+
+**Verify:** a scratch Electron script (no visible windows) against the live
+game. It saves the frame and checks it against a screenshot, and times reads
+(target: a few ms). Memory stays flat over a few hundred reads. Fullscreen and
+windowed both work.
+
+### M18 — Switch to the native module; delete the stream
+
+`stream.ts` calls Rust. The capture window, `capture.ts`, `initCapture` and the
+display-media handler go. Docs updated (architecture, development:
+Rust needed to build).
+
+**Verify:** typecheck and tests. Then live: boxes in a shop phase (windowed and
+fullscreen) and tribes at a hero select, with the read times logged. The user
+plays with highlighting on and reports whether the freezes are gone.
+
+## Risks
+
+- **WGC inside Electron's main process:** a free-threaded frame pool should
+  need no dispatcher, but this is unproven here. M17's probe settles it first.
+- **Debugging is harder:** a crash in native code takes down the main process,
+  not just a window. The Rust code catches errors and returns them instead of
+  panicking across the boundary.
+- **It may not be the fix.** If the freezes come from somewhere else (Discord
+  was encoding video at a steady 64% of the GPU during the trace), this removes
+  a suspect without curing them. The polling fix, the deleted window, and the
+  timings still help either way.
