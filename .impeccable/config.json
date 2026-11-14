@@ -1,0 +1,20 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "bounce-easing",
+        "value": "cubic-bezier(0.2, 0.9, 0.3, 1.4)",
+        "createdAt": "2026-11-13T12:19:19.257Z",
+        "reason": "Claude: .rb-pop result badge, whose own comment reads 'pops in; wins glow, losses shake' - the overshoot is the stated effect, on a win/loss badge in a Hearthstone overlay. Pre-dates this branch. NOT user-confirmed."
+      },
+      {
+        "rule": "bounce-easing",
+        "value": "cubic-bezier(0.2, 0.9, 0.25, 1.15)",
+        "createdAt": "2026-11-13T12:19:19.403Z",
+        "reason": "Claude: .ov-enter odds-card slide-in, 1.15 overshoot - same deliberate motion language as the badge pop. Pre-dates this branch. NOT user-confirmed."
+      }
+    ]
+  }
+}

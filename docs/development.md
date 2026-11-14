@@ -4,12 +4,29 @@
 
 ```sh
 npm install
-npm run dev        # electron-vite dev, hot reloading
+npm run native     # cargo build of native/capture → native/capture.node
+npm run dev        # native, then electron-vite dev, hot reloading
+npm run dev -- -- --profile   # the same, with performance profiling logged
 npm test           # vitest: simulator + real-log replay
 npm run typecheck  # tsc --noEmit
-npm run build      # all three targets into out/
+npm run build      # native, then all three targets into out/
 npm run dist       # + electron-builder --win → NSIS installer in dist/
 ```
+
+**Rust is needed to build** (stable, MSVC toolchain): the screen capture is a Rust
+module, `native/capture` (crates `napi` and `windows`). It's built with plain cargo into
+`native/capture.node`, which is gitignored and shipped unpacked from the asar. Node-API is
+ABI-stable, so it needs no rebuild when Electron updates. Windows locks a loaded DLL, so
+**close the app before rebuilding it**: `npm run native` fails to copy (EBUSY) while the
+app is running, and `--watch` doesn't rebuild Rust.
+
+**Profiling** (`src/main/stallWatch.ts`) is off unless the app is launched with
+`--profile` (the packaged app takes it directly). Then the dev log gets `[profile]`
+lines: startup marks with times (windows created, the mouse hook going in, cards
+loaded, log caught up), any publish over 16ms, and every time the main thread was
+blocked for over 25ms. Off, it's all a no-op. Blocks
+matter because the overlays' forwarded click-through puts a mouse hook on that thread;
+see CLAUDE.md.
 
 First run: open **Setup**, click **Enable logging**, restart Hearthstone.
 
@@ -25,7 +42,7 @@ There is no lint script and no ESLint/Prettier config.
   `join(__dirname, '../preload/index.cjs')` in `src/main/index.ts`. These two must stay
   in sync.
 - The renderer is a two-entry build: `index.html` (main window) and `overlay.html`
-  (both overlay windows).
+  (all four overlay kinds).
 - **No path aliases.** All cross-layer imports are relative (`../../shared/types`).
 
 `tsconfig.json` is one config for all three layers: `strict`, `noUnusedLocals`,
@@ -36,8 +53,15 @@ convention.
 `electron-builder` config is inline in `package.json`: Windows NSIS only, no icon, no
 code signing, no publish or auto-update.
 
-**No runtime `dependencies`** — React, Electron and everything else are devDependencies
-because all three targets are bundled at build time.
+**Two runtime dependencies**: `tesseract.js` (OCR for the hero-select tribe banner — see
+[architecture.md](architecture.md#screen-reading--srcmainvision)) and `koffi` (in-process
+user32 calls for the game window's position, about a microsecond each; the PowerShell
+lookup it replaced compiled C# on every call). electron-vite externalizes everything in
+`dependencies`, so both are `require`d from `node_modules` at runtime rather than bundled:
+tesseract.js runs a worker thread and loads WASM from its own package, and koffi loads its
+prebuilt native binary from `@koromix/koffi-<platform>`. The dev server reads the dependency
+list once at startup, so restart `npm run dev` after adding one. React, Electron and
+everything else are devDependencies bundled at build time.
 
 ## Tests
 

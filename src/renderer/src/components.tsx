@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { BoardMinion, CombatResult, LobbyPlayer, SimOdds } from '../../shared/types'
 import { reducedMotion, useAnimatedNumber, useChange, useFlip } from './anim'
-import { TRIBES, artUrl, ordinal, pct, placeColor, tribeLabel, type Session } from './lib'
+import { TRIBES, artUrl, cardTextParts, ordinal, pct, placeColor, tribeLabel, type Session } from './lib'
+
+/** Card text with Hearthstone's own keyword emphasis kept. */
+export function CardText({ text }: { text?: string }) {
+  const parts = cardTextParts(text)
+  if (!parts.length) return null
+  return (
+    <>
+      {parts.map((p, i) => {
+        const body = p.italic ? <i>{p.text}</i> : p.text
+        return p.bold ? <b key={i}>{body}</b> : <span key={i}>{body}</span>
+      })}
+    </>
+  )
+}
 
 /** A minion as a small card: art, tier pip, attack/health gems, keyword effects. */
 export function MinionCard({ m, size = 'md' }: { m: BoardMinion; size?: 'sm' | 'md' | 'lg' }) {
@@ -60,6 +74,22 @@ function AnimatedPct({ value }: { value: number }) {
  * `fightKey` identifies the fight, so a change within a fight (a teammate's
  * warband coming in) shows a ▲/▼ chip, but a new fight doesn't.
  */
+/**
+ * Win/tie/loss segments as transforms rather than widths. Each one is laid over
+ * the whole bar and then slid and squashed into place, so the 0.8s glide to new
+ * odds is composited instead of relaying out the bar three times a frame.
+ * Values are percentages and must sum to 100.
+ */
+export function segments([win, tie, loss]: number[]) {
+  const classes = ['seg-win', 'seg-tie', 'seg-loss']
+  let offset = 0
+  return [win, tie, loss].map((size, i) => {
+    const style = { transform: `translateX(${offset}%) scaleX(${size / 100})` }
+    offset += size
+    return { cls: classes[i], style }
+  })
+}
+
 export function OddsBar({ odds, compact, fightKey }: { odds: SimOdds; compact?: boolean; fightKey?: unknown }) {
   const w = odds.win * 100
   const t = odds.tie * 100
@@ -93,9 +123,9 @@ export function OddsBar({ odds, compact, fightKey }: { odds: SimOdds; compact?: 
         </div>
       </div>
       <div className="odds-bar">
-        <div className="seg seg-win" style={{ width: `${shown ? w : 0}%` }} />
-        <div className="seg seg-tie" style={{ width: `${shown ? t : 0}%` }} />
-        <div className="seg seg-loss" style={{ width: `${shown ? l : 0}%` }} />
+        {segments(shown ? [w, t, l] : [0, 0, 0]).map((s) => (
+          <div key={s.cls} className={`seg ${s.cls}`} style={s.style} />
+        ))}
       </div>
       <div className="odds-meta">
         {odds.win > 0 && <span>Deal ~{odds.avgDamageDealt.toFixed(1)}</span>}
