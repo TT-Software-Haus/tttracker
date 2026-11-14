@@ -1,8 +1,9 @@
 // List Battlegrounds cards whose text the simulator doesn't understand.
-//   npx tsx scripts/sim-coverage.ts <cards.json from https://api.hearthstonejson.com/v1/latest/enUS/cards.json> [--all | --hero-powers]
+//   npx tsx scripts/sim-coverage.ts <cards.json from https://api.hearthstonejson.com/v1/latest/enUS/cards.json> [--all | --hero-powers | --enchantments]
 // By default checks what can be offered now: the tavern pool and the Timewarped
 // tavern. --all checks every Battlegrounds minion (tokens, hero rewards,
-// rotated-out cards) that could still show up. --hero-powers checks hero powers.
+// rotated-out cards) that could still show up. --hero-powers checks hero powers;
+// --enchantments the enchantments that give a minion combat text (Dark Gifts, Murloc King...).
 import { readFileSync } from 'node:fs'
 import { CardDb, slim } from '../src/main/cards/cardDb'
 import { compileFx, compileHeroPower } from '../src/main/bg/sim/effects'
@@ -24,6 +25,17 @@ if (process.argv.includes('--hero-powers')) {
     console.log(`${p.id.padEnd(28)} ${p.name}: ${fx.unsupported.join(' | ')}`)
   }
   console.log(`\n${new Set(powers.map((p) => p.name)).size} hero powers checked; ${names.size} have unmodelled combat text.`)
+} else if (process.argv.includes('--enchantments')) {
+  let n = 0
+  let bad = 0
+  for (const c of raw.filter((x) => x.type === 'ENCHANTMENT' && x.set === 'BATTLEGROUNDS' && /Deathrattle|Rally|Start of Combat/i.test(x.text ?? ''))) {
+    n++
+    const fx = compileFx(c, db)
+    if (!fx.unsupported.length) continue
+    bad++
+    console.log(`${c.id.padEnd(30)} ${c.name}: ${fx.unsupported.join(' | ')}`)
+  }
+  console.log(`\n${n} combat enchantments checked; ${bad} have unmodelled text.`)
 } else {
   const all = process.argv.includes('--all')
   const cards = (all ? db.bgMinions() : raw.filter((c) => c.type === 'MINION' && (c.pool || c.timewarp) && !c.normalId)).sort(byTier)

@@ -435,7 +435,7 @@ export class BgGame {
     }
     if (pid !== undefined) this.lastBoards.set(pid, { round: round.round, minions: oppBoard })
     // Duos: remember the teammate's warband when it's the one fighting on our side.
-    if (myPid && myPid !== me) this.lastTeammateBoard.set(myPid, this.minionEntities(me).map((e) => this.toInput(e)))
+    if (myPid && myPid !== me) this.lastTeammateBoard.set(myPid, this.withEnchantIndex(() => this.minionEntities(me).map((e) => this.toInput(e))))
   }
 
   private minionEntities(controller: number | undefined): Entity[] {
@@ -526,6 +526,42 @@ export class BgGame {
     return input
   }
 
+  /**
+   * Card ids of the enchantments on a minion that act in combat: a Deathrattle, Rally or Start
+   * of Combat given to it (Murloc King, Earth Invocation, Leapfrogger...). They're entities
+   * ATTACHED to the minion; anything else they do is already in its stats and keywords.
+   */
+  private combatEnchantments(e: Entity): string[] | undefined {
+    return (this.enchantIndex ?? this.buildEnchantIndex()).get(e.id)
+  }
+
+  /**
+   * Combat enchantments by the minion they're attached to. One pass over every entity, so
+   * callers that convert a whole board set `enchantIndex` first (see withEnchantIndex).
+   */
+  private buildEnchantIndex(): Map<number, string[]> {
+    const index = new Map<number, string[]>()
+    for (const x of this.game.entities.values()) {
+      if (x.tags.CARDTYPE !== 'ENCHANTMENT' || !x.tags.ATTACHED) continue
+      if (x.tags.ZONE === 'GRAVEYARD' || x.tags.ZONE === 'REMOVEDFROMGAME') continue
+      if (!/Deathrattle|Rally|Start of Combat/i.test(this.cards.get(x.cardId)?.text ?? '')) continue
+      const on = Number(x.tags.ATTACHED)
+      index.set(on, [...(index.get(on) ?? []), x.cardId])
+    }
+    return index
+  }
+
+  private enchantIndex?: Map<number, string[]>
+
+  private withEnchantIndex<T>(fn: () => T): T {
+    this.enchantIndex = this.buildEnchantIndex()
+    try {
+      return fn()
+    } finally {
+      this.enchantIndex = undefined
+    }
+  }
+
   private toInput(e: Entity): MinionInput {
     const t = e.tags
     return {
@@ -542,6 +578,7 @@ export class BgGame {
       reborn: on(e, 'REBORN'),
       stealth: on(e, 'STEALTH'),
       tier: Number(t.TECH_LEVEL ?? 0) || undefined,
+      enchantments: this.combatEnchantments(e),
     }
   }
 
@@ -579,6 +616,10 @@ export class BgGame {
   }
 
   private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
+    return this.withEnchantIndex(() => this.simJobInner(round, opts))
+  }
+
+  private simJobInner(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
     const me = this.game.friendlyPlayerId
     const dummy = this.dummyPlayerId()
     const a = this.simInput(me)

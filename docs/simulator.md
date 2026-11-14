@@ -167,8 +167,18 @@ doubled, so parsing the actual card's text is correct without any special casing
   the choice-based ones.
 - **Approximated:** Deadeye's target, Glorious Gloop's and Rapid Reanimation's chosen
   minion (random), Wax Warband and Broodmother's improvements (printed numbers).
-- **Not modelled:** Murloc King. What it gives lands on minions as enchantments, which
-  the sim isn't told about (see below).
+- **Murloc King** gives its Deathrattles at Start of Combat. On the first warband they
+  arrive as enchantments (below); a reserve is assumed to have used it (approximated).
+
+## Enchantments
+
+What a minion was given before the boards were captured (a Deathrattle from Murloc King or
+Earth Invocation, a Dark Gift, Leapfrogger's) is an enchantment: a log entity `ATTACHED`
+to the minion, with its own card id and text. `BgGame` passes the ids of those whose text
+has a Deathrattle, Rally or Start of Combat (`MinionInput.enchantments`); the engine
+compiles them like card text and gives the minion the result (`grantedDeathrattles`,
+`grantedRallies`, `grantedStartOfCombat`). Stat and keyword enchantments are already in
+the numbers. The lookup is one pass over the entities per sim job (under 1ms).
 
 `npx tsx scripts/sim-coverage.ts cards.json --hero-powers` lists what's left.
 
@@ -188,10 +198,8 @@ doubled, so parsing the actual card's text is correct without any special casing
   the fight (and probably reports a tie).
 - Per-combat trigger limits ("Twice per combat") are enforced on generic triggers;
   manual handlers count their own.
-- **Enchantments aren't passed to the sim**, only card id, stats and keywords. Anything
-  given to a minion as an enchantment before the boards are captured is lost: a
-  Deathrattle given at Start of Combat (Murloc King, Earth Invocation, Fragrant
-  Phylactery on the first warband), Leapfrogger's, Whirl-O-Tron's copies.
+- Enchantments whose numbers are filled in at runtime ("Copied Deathrattles from 0",
+  "+0 Attack") and Deity text aren't modelled (`--enchantments` lists them).
 
 ## Checking coverage after a patch
 
@@ -200,6 +208,7 @@ doubled, so parsing the actual card's text is correct without any special casing
 npx tsx scripts/sim-coverage.ts cards.json                # tavern pool + Timewarped tavern
 npx tsx scripts/sim-coverage.ts cards.json --all          # every BG minion: tokens, rewards, rotated
 npx tsx scripts/sim-coverage.ts cards.json --hero-powers  # hero powers with combat text
+npx tsx scripts/sim-coverage.ts cards.json --enchantments # enchantments that give combat text
 ```
 
 Prints one line per card (and its golden version) whose text didn't compile, with the

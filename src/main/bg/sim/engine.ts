@@ -54,6 +54,7 @@ export interface Minion {
   /** Deathrattles and Rallies given to this minion in combat ("give a friendly Beast this Deathrattle"). */
   grantedDeathrattles?: Effect[][]
   grantedRallies?: Effect[][]
+  grantedStartOfCombat?: Effect[][]
   /** "This is Reborn with full Health and enchantments." */
   rebornFull?: boolean
 }
@@ -102,6 +103,11 @@ export interface MinionInput {
   reborn?: boolean
   stealth?: boolean
   tier?: number
+  /**
+   * Card ids of enchantments on it that act in combat ("Deathrattle: Summon a 1/1 Murloc." from
+   * Murloc King). Stat and keyword enchantments are already in the numbers above.
+   */
+  enchantments?: string[]
 }
 
 export interface BoardInput {
@@ -245,6 +251,17 @@ export class Combat {
   }
 
   private fromInput(m: MinionInput): Minion {
+    const minion = this.fromInputBare(m)
+    for (const id of m.enchantments ?? []) {
+      const fx = this.fx(id)
+      if (fx.deathrattle?.length) (minion.grantedDeathrattles ??= []).push(fx.deathrattle)
+      if (fx.rally?.length) (minion.grantedRallies ??= []).push(fx.rally)
+      if (fx.startOfCombat?.length) (minion.grantedStartOfCombat ??= []).push(fx.startOfCombat)
+    }
+    return minion
+  }
+
+  private fromInputBare(m: MinionInput): Minion {
     const card = this.cards.get(m.cardId)
     return {
       uid: this.uid++,
@@ -524,13 +541,16 @@ export class Combat {
       // Hero powers go first, then effects that trigger from hand (e.g. Flighty Scout).
       this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
       for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
-      for (const m of [...side.minions]) {
-        if (this.isDead(m)) continue
-        if (m.fx.startOfCombat) this.run(m.fx.startOfCombat, m, side)
-      }
+      for (const m of [...side.minions]) this.minionStartOfCombat(m, side)
       this.resolveDeaths(side)
     }
     for (const idx of [first, 1 - first]) this.attackImmediately(this.sides[idx])
+  }
+
+  private minionStartOfCombat(m: Minion, side: Side) {
+    if (this.isDead(m)) return
+    this.run(m.fx.startOfCombat, m, side)
+    for (const e of m.grantedStartOfCombat ?? []) if (!this.isDead(m)) this.run(e, m, side)
   }
 
   /** "Attack immediately" minions (Start of Combat effects, Wingmen) take their attack now. */
@@ -575,7 +595,7 @@ export class Combat {
       // (seen live: Illidan's Wingmen buffed the reserve before anything else happened).
       this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
       for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
-      for (const m of [...side.minions]) if (!this.isDead(m) && m.fx.startOfCombat) this.run(m.fx.startOfCombat, m, side)
+      for (const m of [...side.minions]) this.minionStartOfCombat(m, side)
       this.resolveDeaths(side)
       this.attackImmediately(side)
       swapped = true
@@ -796,8 +816,10 @@ export function simulateMany(
     for (const m of [...board.minions, ...(board.reserve?.minions ?? [])]) {
       const fx = fxCache.get(m.cardId) ?? compileFx(cards.get(m.cardId), cards)
       const name = cards.get(m.cardId)?.name ?? m.cardId
-      if (fx.unsupported.length) unsupported.add(name)
-      else if (fx.approximated?.length) approximated.add(name)
+      // An enchantment only counts for what it adds in combat (see fromInput).
+      const ench = (m.enchantments ?? []).map((id) => fxCache.get(id) ?? compileFx(cards.get(id), cards))
+      if (fx.unsupported.length || ench.some((e) => e.unsupported.length)) unsupported.add(name)
+      else if (fx.approximated?.length || ench.some((e) => e.approximated?.length)) approximated.add(name)
     }
   // A reserve's hero power always acts. The first warbands' Start of Combat part has already happened
   // when Start of Combat is skipped, but all-combat effects (passive) still act.

@@ -308,13 +308,13 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
       const what = random[1].toLowerCase()
       const tribe = tribeOf(what)
       const pool = cards.pool().filter((c) => (what === 'deathrattle' ? c.mechanics?.includes('DEATHRATTLE') : tribe ? c.races?.includes(tribe) : false))
-      if (!pool.length) return undefined
-      return (c, _me, side, ev) => {
-        for (let i = 0; i < count; i++) {
-          const card = c.pick(pool)
-          if (card) c.summon(side, c.makeMinion({ card }), (ev.pos ?? side.minions.length) + i)
+      if (pool.length)
+        return (c, _me, side, ev) => {
+          for (let i = 0; i < count; i++) {
+            const card = c.pick(pool)
+            if (card) c.summon(side, c.makeMinion({ card }), (ev.pos ?? side.minions.length) + i)
+          }
         }
-      }
     }
     const golden = /^golden /i.test(rawName)
     const baseName = rawName.replace(/^golden /i, '')
@@ -326,13 +326,14 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
       })
       .find(Boolean)
     const tribe = tribeOf(rawName)
-    if (!tokenCard && (atk === undefined || hp === undefined)) return undefined
-    return (c, _me, side, ev) => {
-      for (let i = 0; i < count; i++) {
-        const tok = c.makeMinion({ card: tokenCard, name: singular, atk, hp, tribes: tokenCard ? undefined : tribe ? [tribe] : [], keywords: kws.map((k) => k.toUpperCase().replace(' ', '_')) })
-        c.summon(side, tok, (ev.pos ?? side.minions.indexOf(_me) + 1) + i)
+    // Not a token we know and no stats given: leave it to the templates below ("a copy of this").
+    if (tokenCard || (atk !== undefined && hp !== undefined))
+      return (c, _me, side, ev) => {
+        for (let i = 0; i < count; i++) {
+          const tok = c.makeMinion({ card: tokenCard, name: singular, atk, hp, tribes: tokenCard ? undefined : tribe ? [tribe] : [], keywords: kws.map((k) => k.toUpperCase().replace(' ', '_')) })
+          c.summon(side, tok, (ev.pos ?? side.minions.indexOf(_me) + 1) + i)
+        }
       }
-    }
   }
 
   // Give <who> +A/+H [and Keyword...]  |  Give <who> +A Attack  |  Give <who> Keyword
@@ -476,6 +477,43 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
       }
     }
   }
+  // Trigger this minion's Deathrattles (Jaws of Death)
+  if (/^trigger this minion's deathrattles$/i.test(s)) return (c, me, side) => c.triggerDeathrattle(me, side, side.minions.indexOf(me) + 1)
+  // Give this minion's Attack / max Health to another friendly minion (the Sacrifices)
+  if ((m = /^give this minion's (attack|max health) to (.+)$/i.exec(s))) {
+    const health = m[1].toLowerCase() !== 'attack'
+    const sel = parseSelector(m[2])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) c.buff(t, health ? 0 : me.atk, health ? me.maxHp : 0)
+      }
+  }
+  // Double this minion's Health
+  if (/^double this minion's health$/i.test(s)) return (c, me) => c.buff(me, 0, me.hp)
+  // Gain the Attack of the minion to the left (Admiration)
+  if (/^gain the attack of the minion to the left$/i.test(s)) {
+    return (c, me, side) => {
+      const left = side.minions[side.minions.indexOf(me) - 1]
+      if (left && !c.isDead(left)) c.buff(me, left.atk, 0)
+    }
+  }
+  // Summon a copy of this (Doppelganger)
+  if (/^summon a copy of this$/i.test(s)) return (c, me, side) => void c.summon(side, c.minionCopy(me), side.minions.indexOf(me) + 1)
+  // Summon a random minion from a Tier lower (Replicate)
+  if (/^summon a random minion from a tier lower$/i.test(s)) {
+    return (c, me, side, ev) => {
+      const card = c.pick(c.cards.pool().filter((x) => !x.normalId && x.type === 'MINION' && x.techLevel === Math.max(1, me.tier - 1)))
+      if (card) c.summon(side, c.makeMinion({ card }), ev.pos ?? side.minions.indexOf(me) + 1)
+    }
+  }
+  // Give <who> this enchant (Leapfrogger's "Leapfroggin'": Deathrattle: Give a friendly Beast this enchant)
+  if ((m = /^give (.+?) this enchant$/i.exec(s))) {
+    const sel = parseSelector(m[1])
+    if (sel)
+      return (c, me, side, ev) => {
+        for (const t of sel(c, me, side, ev)) for (const dr of me.grantedDeathrattles ?? []) (t.grantedDeathrattles ??= []).push(dr)
+      }
+  }
   // Give <who> +A/+H and this Deathrattle
   if ((m = /^give (.+?) \+(\d+)\/\+(\d+) and this deathrattle$/i.exec(s))) {
     const sel = parseSelector(m[1])
@@ -514,7 +552,7 @@ function parseActionOnce(s: string, cards: CardSource, self: CardInfo | undefine
     }
   }
   // Summon N <token>s with this minion's maximum stats
-  if ((m = /^summon (a|an|one|two|three|\d+) (.+?) with this minion's maximum stats$/i.exec(s))) {
+  if ((m = /^summon (a|an|one|two|three|\d+) (.+?) with this minion's (?:maximum )?stats$/i.exec(s))) {
     const count = num(m[1])
     const name = m[2].replace(/s$/, '')
     const card = cards.bgMinionsNamed(name).find((x) => !x.normalId)
@@ -981,6 +1019,8 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
       inShopText = false
       continue
     }
+    // Stats an enchantment gives ("+15 Attack.", "Increased stats and ...") are already in the minion's numbers.
+    if (/^(\+\d+(\/\+\d+)? ?(Attack|Health)?|Increased stats( and)?)\.?$/i.test(sentence)) continue
     if (SHOP_TRIGGER.test(sentence) || SHOP_WORDS.test(sentence) || /Can Magnetize|Has \+\d|^This has a different/.test(sentence)) {
       inShopText = true
       continue
@@ -1536,17 +1576,18 @@ export function compileHeroPower(card: CardInfo | undefined, cards: CardSource):
     return fx
   }
   const text = cleanText(card.text)
-  // Murloc King: what it gives lands on minions as enchantments, which the sim isn't told about yet.
-  if (/^At the start of next combat/i.test(text)) {
-    fx.unsupported.push(text)
-    return fx
-  }
-  const at = text.search(/Start of Combat:/i)
-  if (at < 0) return fx
+  // Murloc King: "At the start of next combat, give your minions ..." once it's been used. On the first
+  // warband that has happened before capture (the enchantments come through); a reserve is assumed to
+  // have used it.
+  const next = /^At the start of next combat, /i.exec(text)
+  const soc = /Start of Combat:/i.exec(text)
+  if (!next && !soc) return fx
+  if (next) fx.approximated = ['assumes it was used']
   // "Choose an Element. Start of Combat: Call upon that Element." does nothing until chosen,
   // and choosing swaps in one of the Invocations, which have their own text.
   if (/^Choose an Element/i.test(text)) return fx
-  const body = text.slice(at + 'Start of Combat:'.length).replace(/\([^)]*\)/g, '').trim()
+  const start = next ? next[0].length : soc!.index + soc![0].length
+  const body = text.slice(start).replace(/\([^)]*\)/g, '').trim()
   const problems: string[] = []
   const effects = parseBody(body, cards, card, problems)
   if (problems.length) {

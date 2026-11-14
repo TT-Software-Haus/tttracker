@@ -106,9 +106,66 @@ describe('hero powers that last all combat', () => {
     expect(run(7)).toEqual([9, 9, 1])
   })
 
+  it('Murloc King on a reserve is assumed to have been used', () => {
+    const c = afterStart('Murloc King', vanillas(1, 1))
+    expect(c.sides[0].minions.every((x) => x.grantedDeathrattles?.length === 1)).toBe(true)
+  })
+
   it('lists choice-based hero powers as approximated', () => {
     const r = simulateMany(db, { minions: vanillas(1), heroTier: 2, reserve: { minions: vanillas(1), heroTier: 2, heroPower: power('Deadeye') } }, { minions: vanillas(1), heroTier: 2 }, { iterations: 10, seed: 1, skipStartOfCombat: true })
     expect(r.approximated).toEqual(['Deadeye'])
     expect(r.unsupported).toEqual([])
+  })
+})
+
+// What a minion was given before the boards were captured arrives as enchantments (log entities
+// ATTACHED to it), passed by card id. Only their combat text matters; stats are in the numbers.
+describe('combat enchantments', () => {
+  const fightWith = (mine: MinionInput[]) => new Combat(db, mulberry32(1), { minions: mine, heroTier: 2 }, { minions: [m(VAN, 0, 1000)], heroTier: 2 })
+  const kill = (c: Combat, i: number) => {
+    c.sides[0].minions[i].destroyed = true
+    c.resolveDeaths(c.sides[0])
+  }
+
+  it('a Deathrattle given by Murloc King fires', () => {
+    const c = fightWith([m(VAN, 2, 2, { enchantments: ['TB_BaconShop_HP_017e'] })])
+    kill(c, 0)
+    expect(c.sides[0].minions.map((x) => `${x.atk}/${x.hp} ${x.tribes}`)).toEqual(['1/1 MURLOC'])
+  })
+
+  it('Leapfroggin’ passes itself on to a friendly Beast', () => {
+    const c = fightWith([m(VAN, 2, 2, { enchantments: ['BG21_000e'] }), m('BG21_000', 3, 3)])
+    kill(c, 0)
+    expect(c.sides[0].minions[0].grantedDeathrattles?.length).toBeGreaterThan(0)
+  })
+
+  it('counts an enchantment’s gaps and guesses against its minion', () => {
+    const r = simulateMany(db, { minions: [m(VAN, 1, 1, { enchantments: ['BG22_HERO_001p_t1e'] })], heroTier: 2 }, { minions: vanillas(1), heroTier: 2 }, { iterations: 10, seed: 1 })
+    expect(r.unsupported).toEqual([])
+  })
+})
+
+describe('Dark Gifts (enchantments seen in real logs)', () => {
+  const one = (ench: string, extra: MinionInput[] = []) =>
+    new Combat(db, mulberry32(1), { minions: [m(VAN, 4, 6, { enchantments: [ench] }), ...extra], heroTier: 2 }, { minions: [m(VAN, 0, 1000)], heroTier: 2 })
+
+  it('Golemancy: Deathrattle summons a Golem with its stats', () => {
+    const c = one('BG36_MidGameEffect_000t61e')
+    c.sides[0].minions[0].destroyed = true
+    c.resolveDeaths(c.sides[0])
+    expect(c.sides[0].minions.map((x) => `${x.name} ${x.atk}/${x.hp}`)).toEqual(['Golem 4/6'])
+  })
+
+  it('Offensive Sacrifice: Deathrattle gives its Attack to another friendly minion', () => {
+    const c = one('BG36_MidGameEffect_000te2', vanillas(1))
+    c.sides[0].minions[0].destroyed = true
+    c.resolveDeaths(c.sides[0])
+    expect(c.sides[0].minions[0].atk).toBe(5)
+  })
+
+  it('Doppelganger: Start of Combat summons a copy (on a reserve, or when Start of Combat runs)', () => {
+    const c = one('BG36_MidGameEffect_000t90e')
+    ;(c as unknown as { startOfCombat(first: 0 | 1): void }).startOfCombat(1)
+    expect(c.sides[0].minions.map((x) => `${x.atk}/${x.hp}`)).toEqual(['4/6', '4/6'])
   })
 })
