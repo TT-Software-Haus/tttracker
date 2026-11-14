@@ -1,10 +1,13 @@
 # Merges PRs into develop once Copilot has reviewed their head commit and left
-# no comments on it. Copilot itself can only comment, never approve or merge,
-# so the Actions bot does both on its verdict.
+# no comments on it. PRs from contributors (write access or above) merge on
+# that alone; anyone else's also need a contributor's approval of that commit.
+# Copilot itself can only comment, never approve or merge, so the Actions bot
+# does both on its verdict.
 #
 # Polls rather than reacting to pull_request_review: a run triggered by
 # Copilot is held for manual approval, as Copilot counts as a first-time
-# contributor. Schedules run from the default branch (develop).
+# contributor. Schedules run from the default branch (develop). Nothing here
+# checks out or runs PR code, so fork PRs are safe to handle.
 name: Merge on Copilot review
 
 on:
@@ -27,42 +30,77 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       # The `copilot-review` status is the required check on develop's ruleset:
-      # each new push has none until Copilot reviews that commit clean.
-      # Every verdict is recomputed each run, so a comment added after a
-      # failed merge still blocks the retry.
+      # each new push has none until it passes again. Every verdict is
+      # recomputed each run, so a comment added after a failed merge still
+      # blocks the retry.
       - run: |
           # A failed API call must fail the run, never read as "no comments".
           set -euo pipefail
           is_copilot='.user.login == "Copilot" or .user.login == "copilot-pull-request-reviewer[bot]"'
-          # Forks are left to a human: auto-merging strangers' code into a public repo isn't wanted.
-          for pr in $(gh pr list --base develop --state open --limit 1000 --json number,isCrossRepository \
-                        --jq '.[] | select(.isCrossRepository | not) | .number'); do
+          # Outsiders read as `read`; an API failure reads as no access, the strict side.
+          contributor() {
+            case $(gh api "repos/$GH_REPO/collaborators/$1/permission" --jq .role_name 2>/dev/null || echo none) in
+              admin|maintain|write) return 0 ;;
+            esac
+            return 1
+          }
+          status() { # state, description; posted only on change: a commit holds at most 1000
+            [ "$state" = "$1" ] || gh api "repos/$GH_REPO/statuses/$SHA" -f state="$1" \
+              -f context=copilot-review -f description="$2" > /dev/null
+          }
+
+          for row in $(gh pr list --base develop --state open --limit 1000 --json number,author \
+                         --jq '.[] | "\(.number):\(.author.login)"'); do
+            pr=${row%%:*} author=${row#*:}
             export SHA=$(gh pr view "$pr" --json headRefOid --jq .headRefOid)
 
             reviews=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
                         --jq ".[] | select(.commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
             if [ "$reviews" -eq 0 ]; then echo "#$pr: Copilot hasn't reviewed $SHA yet"; continue; fi
 
-            # Every Copilot comment on this commit, across all its reviews, so a
-            # later review that doesn't repeat an earlier finding can't clear it.
-            comments=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/comments" \
-                         --jq ".[] | select(.original_commit_id == env.SHA) | select($is_copilot) | .id" | wc -l)
+            # Unresolved Copilot threads on any commit of the PR. Copilot re-reviews
+            # only what a push changed, so its earlier findings aren't repeated on
+            # the new head; they stay open until someone resolves the thread.
+            open=$(gh api graphql --paginate -F owner="${GH_REPO%/*}" -F name="${GH_REPO#*/}" -F pr="$pr" -f query='
+                query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
+                  repository(owner: $owner, name: $name) { pullRequest(number: $pr) {
+                    reviewThreads(first: 100, after: $endCursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes { isResolved comments(first: 1) { nodes { author { login } } } }
+                    } } } }' \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+                      | select((.isResolved | not) and .comments.nodes[0].author.login == "copilot-pull-request-reviewer")
+                      | 1' | wc -l)
             state=$(gh api "repos/$GH_REPO/commits/$SHA/status" \
                       --jq '[.statuses[] | select(.context == "copilot-review")][0].state // ""')
 
-            # Statuses are only posted on change: a commit holds at most 1000 of them.
-            if [ "$comments" -gt 0 ]; then
-              echo "#$pr: Copilot left $comments comment(s)"
-              [ "$state" = failure ] || gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure \
-                -f context=copilot-review -f description="Copilot left $comments comment(s)" > /dev/null
+            if [ "$open" -gt 0 ]; then
+              echo "#$pr: $open unresolved Copilot comment(s)"
+              status failure "$open unresolved Copilot comment(s)"
               continue
             fi
 
-            approved=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
-                         --jq '.[] | select(.commit_id == env.SHA and .user.login == "github-actions[bot]" and .state == "APPROVED") | .id' | wc -l)
-            [ "$approved" -gt 0 ] || gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
-            [ "$state" = success ] || gh api "repos/$GH_REPO/statuses/$SHA" -f state=success \
-              -f context=copilot-review -f description="Copilot raised nothing" > /dev/null
+            if ! contributor "$author"; then
+              # Each human's latest verdict across the whole PR, counted only if it
+              # approves this commit: a later rejection of any commit overrides it.
+              # The bot's own approval never counts.
+              approvers=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" --jq '.[]
+                  | select(.user.login != "github-actions[bot]" and .state != "COMMENTED" and .state != "PENDING")
+                  | .user.login + " " + .state + " " + .commit_id' \
+                | awk -v sha="$SHA" '{ last[$1] = $2 " " $3 } END { for (u in last) if (last[u] == "APPROVED " sha) print u }')
+              approved=
+              for u in $approvers; do contributor "$u" && approved=$u && break; done
+              if [ -z "$approved" ]; then
+                echo "#$pr: from $author, waiting on a contributor's approval"
+                status pending "Copilot raised nothing; needs a contributor's approval"
+                continue
+              fi
+            fi
+
+            bot=$(gh api --paginate "repos/$GH_REPO/pulls/$pr/reviews" \
+                    --jq '.[] | select(.commit_id == env.SHA and .user.login == "github-actions[bot]" and .state == "APPROVED") | .id' | wc -l)
+            [ "$bot" -gt 0 ] || gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
+            status success "Copilot raised nothing"
 
             # A failed merge (conflict, mergeability not computed yet) is retried next run.
             gh pr merge "$pr" --merge --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
