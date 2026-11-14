@@ -563,7 +563,7 @@ failure, and electron-builder `asarUnpack`.
 **Verify:** `npm run dev` builds the crate and main calls the function. Tests
 and typecheck pass.
 
-### M17 — WGC strip capture in Rust
+### M17 — WGC strip capture in Rust ✅ done
 
 `open()`, `frame(height, fraction)` → `{ width, height, bgra }`, `close()`, as
 above.
