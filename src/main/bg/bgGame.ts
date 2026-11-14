@@ -454,18 +454,6 @@ export class BgGame {
   }
 
   /**
-   * What's on offer in the tavern right now.
-   *
-   * During a shop phase the offerings sit in the *other* player's PLAY zone —
-   * the same slot that holds the opponent's warband during a fight. Verified
-   * against a real log: four pool minions early in the shop, two by the end
-   * (the missing pair having been bought and appeared on my own board), and
-   * none at all once combat starts.
-   *
-   * Only ever call this during 'shop'. The IS_BACON_POOL_MINION filter keeps
-   * out anything in that slot that isn't a tavern minion.
-   */
-  /**
    * How many cards are on offer in the tavern, spells included. Checked
    * against a live log: tavern spells (CARDTYPE BATTLEGROUND_SPELL) sit in the
    * same PLAY zone as the offered minions, each with its own ZONE_POSITION.
@@ -483,9 +471,22 @@ export class BgGame {
     ).length
   }
 
+  /**
+   * What's on offer in the tavern right now.
+   *
+   * During a shop phase the offerings sit in the *other* player's PLAY zone —
+   * the same slot that holds the opponent's warband during a fight. Verified
+   * against a real log: four pool minions early in the shop, two by the end
+   * (the missing pair having been bought and appeared on my own board), and
+   * none at all once combat starts. Only ever call this during 'shop'.
+   *
+   * Not only pool minions (IS_BACON_POOL_MINION): seen live, a token created
+   * into the tavern (Dark Paradox, BG36_360t3) is on offer without that tag,
+   * and got no box. Same rule as tavernSize(): a minion with a slot.
+   */
   private shopMinions(): BoardMinion[] {
     return this.minionEntities(this.dummyPlayerId())
-      .filter((e) => e.tags.IS_BACON_POOL_MINION === '1')
+      .filter((e) => Number(e.tags.ZONE_POSITION ?? 0) > 0)
       // The slot a card sits in on screen. Kept because the tavern can also
       // hold spells, which take a slot without being minions — so counting
       // minions left-to-right would point at the wrong card.
