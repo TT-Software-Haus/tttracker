@@ -86,8 +86,13 @@ export function findShopSlots(bgra: Buffer, width: number, height: number): Rect
     }
     // Sizes are relative to height, which the board scales with (a wider
     // window only adds margin). Measured at 2160: shields 52-57px wide, a slot
-    // every 279-281px. The buttons' runs were 27-130px at uneven spacing.
-    const shields = runs.filter(([s, e]) => e - s >= minRun && e - s >= height * 0.018 && e - s <= height * 0.035)
+    // every 279-281px. The buttons' runs were 27-130px at uneven spacing, so
+    // only the top limit keeps them out. The bottom one is low because stars
+    // cover most of a high-tier shield: seen live at 720 high, 4-6 stars left
+    // magenta strips 4-5px wide, and the band broken up by rows of stars, so
+    // no boxes at all. The spacing and one-row checks below do the rest.
+    const narrowest = Math.max(3, Math.round(height * 0.005))
+    const shields = runs.filter(([s, e]) => e - s >= narrowest && e - s <= height * 0.035)
     const centres = shields.map(([s, e]) => Math.round((s + e - 1) / 2))
     if (centres.length < 2) return []
 

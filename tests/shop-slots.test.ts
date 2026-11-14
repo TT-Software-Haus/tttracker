@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { gunzipSync } from 'node:zlib'
+import { join } from 'node:path'
 import { findShopSlots } from '../src/main/vision/shopSlots'
 
 /**
@@ -41,6 +44,19 @@ describe('finding the tavern slots', () => {
     { x: 700, y: 100, w: 43, h: 60 },
     { x: 780, y: 100, w: 37, h: 60 },
   ]
+
+  it('finds high-tier shields, which stars mostly cover', () => {
+    // Seen live, no boxes at all: rows 180-260 of a real 1280x720 frame of a
+    // tavern of 4-6 star cards and a spell. Their magenta was strips 4-5px wide,
+    // under the old 13px minimum. The cards are centred ~93px apart.
+    const rows = gunzipSync(readFileSync(join(__dirname, 'fixtures', 'shop-high-tier-rows-180-260.bgra.gz')))
+    const buf = Buffer.alloc(W * H * 4)
+    rows.copy(buf, 180 * W * 4)
+    const slots = findShopSlots(buf, W, H)
+    expect(slots).toHaveLength(5)
+    const centres = slots.map((s) => s.x + s.width / 2)
+    for (let i = 1; i < centres.length; i++) expect(centres[i] - centres[i - 1]).toBeCloseTo(93.5, -1)
+  })
 
   it('finds one slot per card, left to right', () => {
     const slots = findShopSlots(frame(row(5)), W, H)
