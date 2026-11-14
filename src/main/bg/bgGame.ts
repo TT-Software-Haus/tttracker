@@ -14,6 +14,7 @@ import type { Entity, Game, GameEvent } from '../game/game'
 import type { BgMatch, BgSnapshot, BoardMinion, CombatResult, CombatRound, GameMode, LobbyPlayer, SimOdds } from '../../shared/types'
 import { simulateMany, type BoardInput, type MinionInput } from './sim/engine'
 import type { SimJob, Simulator } from './sim/remote'
+import { Superseded } from './sim/newestOnly'
 import { randomUUID } from 'node:crypto'
 
 const on = (e: Entity, tag: string) => e.tags[tag] !== undefined && e.tags[tag] !== '0'
@@ -51,6 +52,7 @@ export class BgGame {
   simulate?: Simulator
   /** The newest sim started for each round: a resim's odds replace the first's. */
   private simFor = new WeakMap<CombatRound, number>()
+  private liveSimFor = new WeakMap<CombatRound, number>()
   private simSeq = 0
 
   /** Called after a finished game; return value is stored as history. */
@@ -233,6 +235,7 @@ export class BgGame {
       // The winner's hero hits the loser's hero: combat is decided.
       const mine = this.game.controllerOf(attacker) === this.game.friendlyPlayerId
       this.current.result = mine ? 'WON' : 'LOST'
+      this.liveSimFor.delete(this.current)
       this.heroHpAtAttack = new Map([...this.game.entities.values()].filter((h) => h.tags.CARDTYPE === 'HERO').map((h) => [h.id, effectiveHealth(h)]))
       this.onChange?.()
       return
@@ -241,9 +244,34 @@ export class BgGame {
       // A teammate's warband has come in: re-run from the current position.
       this.resimPending = false
       this.captureBoards(this.current, false)
-      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true })
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true, next: this.nextAttackers(attacker) })
       this.onChange?.()
+    } else if (this.current.odds || this.simFor.has(this.current)) {
+      // Every later attack: the previous one's deaths have settled and we know who swings now.
+      // In Duos, note which warbands have come in, so one that's fighting isn't also a reserve.
+      this.captureBoards(this.current, false)
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true, next: this.nextAttackers(attacker), live: true })
     }
+  }
+
+  /**
+   * Where each side's attacks resume, as indexes into its board: the minion attacking now, and on
+   * the other side the left-most of those that have attacked least this fight (NUM_ATTACKS_THIS_TURN).
+   * The game keeps a pointer that a minion summoned behind it doesn't jump, so a fresh token can be
+   * picked a little early.
+   */
+  private nextAttackers(attacker: Entity): { a?: number; b?: number } {
+    const me = this.game.friendlyPlayerId
+    const pick = (controller: number | undefined) => {
+      const board = this.minionEntities(controller)
+      const at = board.indexOf(attacker)
+      if (at >= 0) return at
+      const counts = board.map((e) => Number(e.tags.NUM_ATTACKS_THIS_TURN ?? 0))
+      const least = Math.min(...counts.filter((_, i) => Number(board[i].tags.ATK ?? 0) > 0))
+      const i = counts.findIndex((n, j) => n === least && Number(board[j].tags.ATK ?? 0) > 0)
+      return i >= 0 ? i : undefined
+    }
+    return { a: pick(me), b: pick(this.dummyPlayerId()) }
   }
 
   private onHeroAttackEnd() {
@@ -275,6 +303,7 @@ export class BgGame {
     const c = this.current
     if (!c) return
     if (!c.result) c.result = 'TIED'
+    c.liveOdds = undefined // the fight is over: show its opening odds again
     if (c.opponentPlayerId !== undefined) this.lastResults.set(c.opponentPlayerId, c.result)
     this.current = undefined
     this.resimPending = false
@@ -602,24 +631,30 @@ export class BgGame {
   }
 
   /** Fill in the round's odds: now, or when the sim worker answers. */
-  private simulateInto(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }) {
+  private simulateInto(round: CombatRound, opts: SimAt & { live?: boolean }) {
     const job = this.simJob(round, opts)
     if (!job) return
     const { partial, ...sim } = job
+    const field = opts.live ? 'liveOdds' : 'odds'
     if (!this.simulate) {
-      round.odds = this.runSim(sim, partial)
+      round[field] = this.runSim(sim, partial)
       return
     }
+    const seqs = opts.live ? this.liveSimFor : this.simFor
     const seq = ++this.simSeq
-    this.simFor.set(round, seq)
-    this.simulate(sim).then(
+    seqs.set(round, seq)
+    this.simulate(sim, opts.live ? { lane: 'live' } : undefined).then(
       (odds) => {
-        if (this.simFor.get(round) !== seq) return // a resim replaced it
-        round.odds = partial ? { ...odds, partial: true } : odds
+        if (seqs.get(round) !== seq) return // a resim replaced it
+        // Live odds for a fight that has ended are of no use; the opening odds stay.
+        if (opts.live && (round !== this.current || this.emittedRounds.has(round))) return
+        round[field] = partial ? { ...odds, partial: true } : odds
         this.onChange?.()
         if (this.emittedRounds.has(round)) this.onMatchUpdated?.()
       },
-      (err) => console.error('Simulation failed', err),
+      (err) => {
+        if (!(err instanceof Superseded)) console.error('Simulation failed', err)
+      },
     )
   }
 
@@ -646,15 +681,17 @@ export class BgGame {
     return Number(t.BACON_COMBAT_DAMAGE_CAP) || undefined
   }
 
-  private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
+  private simJob(round: CombatRound, opts: SimAt): (SimJob & { partial: boolean }) | undefined {
     return this.withEnchantIndex(() => this.simJobInner(round, opts))
   }
 
-  private simJobInner(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
+  private simJobInner(round: CombatRound, opts: SimAt): (SimJob & { partial: boolean }) | undefined {
     const me = this.game.friendlyPlayerId
     const dummy = this.dummyPlayerId()
     const a = this.simInput(me)
     const b = this.simInput(dummy)
+    a.nextAttacker = opts.next?.a
+    b.nextAttacker = opts.next?.b
     a.reserve = this.reserveInput('me')
     b.reserve = this.reserveInput('opp')
     if (!a.minions.length && !b.minions.length) return undefined
@@ -769,7 +806,10 @@ export class BgGame {
     const player = this.game.playerEntity(this.game.friendlyPlayerId)
     const mate = this.lobbyHero(Number(player?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0) || undefined)
     const lastMine = [...this.rounds].reverse().find((r) => r.myBoard.length)
-    for (const r of this.rounds) this.emittedRounds.add(r)
+    for (const r of this.rounds) {
+      this.emittedRounds.add(r)
+      delete r.liveOdds // shown during the fight, never saved
+    }
     this.onMatchEnd({
       id: randomUUID(),
       startedAt: this.game.startedAt,
@@ -781,7 +821,15 @@ export class BgGame {
       rounds: this.round,
       finalBoard: lastMine?.myBoard ?? this.boardOf(this.game.friendlyPlayerId),
       teammateHeroCardId: mate?.cardId,
+      // The same round objects, so odds answered after the save land in it (onMatchUpdated).
       combats: this.rounds,
     })
   }
+}
+
+/** Where a sim starts from: who swings first, and mid-fight, where each side's attacks resume. */
+interface SimAt {
+  firstAttacker?: 0 | 1
+  skipStartOfCombat?: boolean
+  next?: { a?: number; b?: number }
 }

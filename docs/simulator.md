@@ -228,6 +228,25 @@ the numbers. The lookup is one pass over the entities per sim job (under 1ms).
 
 `npx tsx scripts/sim-coverage.ts cards.json --hero-powers` lists what's left.
 
+## Live odds
+
+`BgGame` simulates at the first attack of a fight (the opening `odds`), then again at the start
+of every later attack, from the board as it is on screen (PowerTaskList), into
+`CombatRound.liveOdds`. The Live page and the overlay show `liveOdds ?? odds`; `liveOdds` is
+cleared when the fight ends and left out of the saved match, so history and the accuracy stats
+keep the opening odds. The GameState stream runs ahead and isn't used, so they can't spoil the
+result.
+
+- **Where attacks resume** (`BoardInput.nextAttacker`): the minion attacking now on its side; on
+  the other, the left-most of those that have attacked least (`NUM_ATTACKS_THIS_TURN`).
+- **Duos:** each re-sim notes which warbands have come in, so one that's fighting isn't also
+  counted as the reserve still to come.
+- **Worker:** live jobs go in a `newestOnly` lane: while one runs, only the newest waits; the rest
+  are dropped (`Superseded`).
+- Measured on 78 logged fights (Brier score, lower is better): 0.457 at the first attack, 0.416 a
+  quarter of the way through, 0.290 halfway, 0.153 at three quarters, 0 at the end (every fight
+  ends on its real result). Building each job costs about 1.4ms on the main thread.
+
 ## Known limitations
 
 - Shop auras ("Your other Murlocs have +2 Attack") are deliberately treated as no-ops,

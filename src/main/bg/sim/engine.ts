@@ -139,6 +139,8 @@ export interface BoardInput {
   turn?: number
   /** Trinket card ids. What they do during combat applies all fight; Start of Combat only if it hasn't happened. */
   trinkets?: string[]
+  /** Mid-fight: index of the minion that attacks next on this side (default: the left-most). */
+  nextAttacker?: number
   /** Duos: the teammate's warband (and hand) that takes over when this one is wiped out. */
   reserve?: ReserveInput
 }
@@ -199,7 +201,7 @@ export class Combat {
       idx,
       minions: [],
       heroTier: input.heroTier,
-      nextAttacker: 0,
+      nextAttacker: input.nextAttacker ?? 0,
       nameBonus: new Map(),
       tribeBonus: new Map(),
       hand: (input.hand ?? []).map((m) => this.fromInput(m)),

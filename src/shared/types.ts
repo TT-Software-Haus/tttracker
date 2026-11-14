@@ -89,6 +89,11 @@ export interface CombatRound {
   oppReserve?: BoardMinion[]
   oppReserveHeroCardId?: string
   odds?: SimOdds
+  /**
+   * During the fight: odds re-simulated from the board as it is now, after each attack. Shown live;
+   * not saved, so history and the accuracy stats keep the opening `odds`.
+   */
+  liveOdds?: SimOdds
   result?: CombatResult
   damage?: number
 }
