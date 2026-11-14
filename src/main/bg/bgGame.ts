@@ -53,6 +53,8 @@ export class BgGame {
   /** The newest sim started for each round: a resim's odds replace the first's. */
   private simFor = new WeakMap<CombatRound, number>()
   private liveSimFor = new WeakMap<CombatRound, number>()
+  /** Minions that have died in the current fight, by controller, in order (for live odds). */
+  private deadThisFight = new Map<number, MinionInput[]>()
   private simSeq = 0
 
   /** Called after a finished game; return value is stored as history. */
@@ -216,6 +218,12 @@ export class BgGame {
       }
       return
     }
+    // A minion dying in the fight: remembered for live odds ("your first Mech that died").
+    if (tag === 'ZONE' && value === 'GRAVEYARD' && prev === 'PLAY' && e.tags.CARDTYPE === 'MINION' && this.current && this.inCombat) {
+      const owner = this.game.controllerOf(e)
+      const dead = { ...this.toInput(e), health: Number(e.tags.HEALTH ?? 0) }
+      this.deadThisFight.set(owner, [...(this.deadThisFight.get(owner) ?? []), dead])
+    }
     // Duos: a new hero (and warband) entering mid-combat.
     if (tag === 'ZONE' && value === 'PLAY' && prev !== 'PLAY' && e.tags.CARDTYPE === 'HERO' && this.current && this.inCombat) {
       this.resimPending = true
@@ -294,6 +302,7 @@ export class BgGame {
     this.captureBoards(round, true)
     this.current = round
     this.rounds.push(round)
+    this.deadThisFight.clear()
     this.resimPending = false
     this.simulateInto(round, { firstAttacker, skipStartOfCombat: true })
     this.onChange?.()
@@ -627,6 +636,8 @@ export class BgGame {
       stealth: on(e, 'STEALTH'),
       tier: Number(t.TECH_LEVEL ?? 0) || undefined,
       enchantments: this.combatEnchantments(e),
+      // Avenge progress: SCORE_VALUE_2 counts up on Avenge minions (seen 0-3 on an Avenge (4) in a real log).
+      avenge: this.cards.get(e.cardId)?.mechanics?.includes('AVENGE') ? Number(t.SCORE_VALUE_2 ?? 0) || undefined : undefined,
     }
   }
 
@@ -692,6 +703,11 @@ export class BgGame {
     const b = this.simInput(dummy)
     a.nextAttacker = opts.next?.a
     b.nextAttacker = opts.next?.b
+    // Mid-fight, what has happened so far: deaths (for "the first Mech that died") and Avenge counts.
+    if (opts.next) {
+      a.dead = this.deadThisFight.get(me ?? -1)
+      b.dead = this.deadThisFight.get(dummy ?? -1)
+    }
     a.reserve = this.reserveInput('me')
     b.reserve = this.reserveInput('opp')
     if (!a.minions.length && !b.minions.length) return undefined

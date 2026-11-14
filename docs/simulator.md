@@ -241,11 +241,17 @@ result.
   the other, the left-most of those that have attacked least (`NUM_ATTACKS_THIS_TURN`).
 - **Duos:** each re-sim notes which warbands have come in, so one that's fighting isn't also
   counted as the reserve still to come.
+- **What has happened so far:** minions that died this fight (`BoardInput.dead`, from moves to
+  the graveyard) and Avenge progress (`MinionInput.avenge`, the log's `SCORE_VALUE_2` on Avenge
+  minions, seen counting 0-3 on an Avenge (4)). Not in the log, so a re-sim starts them empty:
+  "per combat" uses, Blood Gem upgrades, buffs on later summons, Eclipsion's used immunity.
 - **Worker:** live jobs go in a `newestOnly` lane: while one runs, only the newest waits; the rest
   are dropped (`Superseded`).
-- Measured on 78 logged fights (Brier score, lower is better): 0.457 at the first attack, 0.416 a
-  quarter of the way through, 0.290 halfway, 0.153 at three quarters, 0 at the end (every fight
-  ends on its real result). Building each job costs about 1.4ms on the main thread.
+- Measured on 78 logged fights (Brier score, lower is better): 0.454 at the first attack, 0.416 a
+  quarter of the way through, 0.285 halfway, 0.152 at three quarters, 0 at the end (every fight
+  ends on its real result). Carrying deaths and Avenge counts took halfway from 0.290 to 0.285
+  (run-to-run noise is about 0.001): small, because few fights have the cards that use them.
+  Building each job costs about 1.3ms on the main thread.
 
 ## Known limitations
 

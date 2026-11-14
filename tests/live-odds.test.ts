@@ -75,3 +75,29 @@ describe('live odds over a real fight', () => {
     expect(saved[0].combats.every((c) => !('liveOdds' in c))).toBe(true)
   })
 })
+
+describe('the re-sim carries what has happened in the fight', () => {
+  it('starts Avenge counters and the dead list from the input', () => {
+    const m = { cardId: 'X', atk: 1, health: 1 }
+    const c = new Combat(new CardDb(), mulberry32(1), { minions: [{ ...m, avenge: 3 }], heroTier: 1, dead: [m, m] }, { minions: [m], heroTier: 1 })
+    expect(c.sides[0].minions[0].avenge).toBe(3)
+    expect(c.sides[0].dead).toHaveLength(2)
+  })
+
+  it('passes the minions that have died so far to live re-sims', () => {
+    const db = new CardDb()
+    db.load(JSON.parse(readFileSync(join(fixtures, 'cards-wingmen.json'), 'utf8')))
+    const game = new Game('GameState')
+    const bg = new BgGame(game, db)
+    bg.simIterations = 50
+    const deadCounts: number[] = []
+    const inner = bg as unknown as { runSim(job: { a: { dead?: unknown[] }; b: { dead?: unknown[] } }, partial: boolean): unknown }
+    const orig = inner.runSim.bind(bg)
+    inner.runSim = (job, partial) => {
+      deadCounts.push((job.a.dead?.length ?? 0) + (job.b.dead?.length ?? 0))
+      return orig(job, partial)
+    }
+    for (const l of gunzipSync(readFileSync(join(fixtures, 'bg-duos-wingmen.log.gz'))).toString().split('\n')) game.handleLine(l)
+    expect(Math.max(...deadCounts)).toBeGreaterThan(0)
+  })
+})

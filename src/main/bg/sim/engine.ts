@@ -126,6 +126,8 @@ export interface MinionInput {
    * Murloc King). Stat and keyword enchantments are already in the numbers above.
    */
   enchantments?: string[]
+  /** Mid-fight: deaths its Avenge has counted so far (SCORE_VALUE_2 in the log). */
+  avenge?: number
 }
 
 export interface BoardInput {
@@ -141,6 +143,8 @@ export interface BoardInput {
   trinkets?: string[]
   /** Mid-fight: index of the minion that attacks next on this side (default: the left-most). */
   nextAttacker?: number
+  /** Mid-fight: this side's minions that have died so far this fight, in order. */
+  dead?: MinionInput[]
   /** Duos: the teammate's warband (and hand) that takes over when this one is wiped out. */
   reserve?: ReserveInput
 }
@@ -220,6 +224,7 @@ export class Combat {
       pendingSpace: [],
     }
     for (const m of input.minions.slice(0, MAX_BOARD)) side.minions.push(this.fromInput(m))
+    side.dead = (input.dead ?? []).map((m) => this.fromInput(m))
     side.standIns = this.standInsFor(side)
     this.warbandAuras(side)
     return side
@@ -345,7 +350,7 @@ export class Combat {
       reborn: !!m.reborn,
       stealth: !!m.stealth,
       destroyed: false,
-      avenge: 0,
+      avenge: m.avenge ?? 0,
       attackImmediately: false,
       fx: this.fx(m.cardId),
       shieldHits: this.fx(m.cardId).shieldHits,
