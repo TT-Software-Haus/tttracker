@@ -69,12 +69,12 @@ describe('highlight boxes over the tavern', () => {
     screen.reads = 0
     tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(screen.reads).toBe(2) // placed, then confirmed in the same place
+    expect(screen.reads).toBe(5) // placed, then the same four times
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
 
     tracker.refreshHighlights(base([minion('BRANN', 2)]), build)
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(screen.reads).toBe(4)
+    expect(screen.reads).toBe(10)
     expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([200])
   })
 

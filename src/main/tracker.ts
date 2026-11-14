@@ -56,9 +56,11 @@ const GAME_OVER_LINGER_MS = 30_000
 const TRIBE_READ_ATTEMPTS = 12
 const TRIBE_READ_INTERVAL_MS = 2500
 /** Let the tavern's cards slide into place before the first read. */
-const HIGHLIGHT_SETTLE_MS = 500
-/** How often to re-read the tavern while a wanted minion is on offer. */
-const HIGHLIGHT_POLL_MS = 1000
+const HIGHLIGHT_SETTLE_MS = 250
+/** How often to re-read the tavern until the boxes settle. Reads take ~2.5ms. */
+const HIGHLIGHT_POLL_MS = 250
+/** Unchanged reads before the boxes count as settled and polling stops. */
+const SETTLED_READS = 4
 const STALL_MS = 3 * 60_000
 
 function isHearthstoneRunning(): Promise<boolean> {
@@ -131,6 +133,8 @@ export class Tracker extends EventEmitter {
   private highlights: BgSnapshot['shopHighlights'] = []
   /** The tavern's contents when the current boxes were wanted; a change clears them. */
   private highlightKey = ''
+  /** Reads in a row that put the boxes where they already were. */
+  private highlightSameReads = 0
   /** Wanted minions on offer right now, for the polling loop to box. */
   private highlightTargets: (BoardMinion & { debug: boolean })[] = []
   /** True while the loop is running, including mid-capture when no timer is set. */
@@ -410,6 +414,7 @@ export class Tracker extends EventEmitter {
       this.highlightKey = key
       this.highlightTargets = targets
       this.highlights = []
+      this.highlightSameReads = 0
     }
     if (targets.length && !this.highlightLoop) {
       this.highlightLoop = true
@@ -422,10 +427,11 @@ export class Tracker extends EventEmitter {
     this.highlightTimer = undefined
     const key = this.highlightKey
     const targets = this.highlightTargets
-    // Set once two reads in a row put the boxes in the same place: the cards
-    // have stopped sliding, and they won't move again until the log says the
-    // tavern changed, which restarts the loop. Polling all turn instead grabbed
-    // a frame every second, and the user saw hitches with the boxes on.
+    // Set once the boxes have stayed put for SETTLED_READS reads (~1s): the
+    // cards have stopped sliding, and they won't move again until the log says
+    // the tavern changed, which restarts the loop. Polling all turn instead
+    // grabbed a frame every second, and the user saw hitches with the boxes on.
+    // Not just two reads: a slide can start a moment after the log changes.
     let placed = false
     try {
       if (!targets.length) return
@@ -452,9 +458,10 @@ export class Tracker extends EventEmitter {
         return r ? [{ x: Math.round(r.x * sx + ox), y: Math.round(r.y * sy + oy), width: Math.round(r.width * sx), height: Math.round(r.height * sy), ...(m.debug && { debug: true }) }] : []
       })
       if (JSON.stringify(boxes) === JSON.stringify(this.highlights)) {
-        placed = true
+        placed = ++this.highlightSameReads >= SETTLED_READS
         return
       }
+      this.highlightSameReads = 0
       this.highlights = boxes
       this.publish()
     } catch (err) {
@@ -479,6 +486,7 @@ export class Tracker extends EventEmitter {
     this.highlightLoop = false
     this.highlightTargets = []
     this.highlights = []
+    this.highlightSameReads = 0
     this.highlightKey = ''
   }
 

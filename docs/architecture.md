@@ -189,10 +189,11 @@ the log's count of tavern cards, spells included (tavern spells are
 `ZONE_POSITION`). A missed end shield, or a read taken while cards are still sliding
 after a purchase, shows up as a mismatch, and that read draws nothing.
 While a wanted minion (or, with *Debug minion highlight*, any minion) is on offer,
-`Tracker.readHighlights` reads the tavern half a second after the tavern changes, then
-once a second until two reads in a row put the boxes in the same place (the cards have
-stopped sliding). It then stops until the tavern changes again. The log can't say where cards *are*, only which slot they're in, so
-the screen is the authority on position. Any change to what's on offer clears the boxes
+`Tracker.readHighlights` reads the tavern 0.25s after the tavern changes, then every
+0.25s until the boxes have stayed put for four reads in a row (about a second; a slide
+can start a moment after the log changes). It then stops until the tavern changes
+again. The log can't say where cards *are*, only which slot they're in, so the screen is
+the authority on position. Any change to what's on offer clears the boxes
 at once. A captured frame is the visible window, title bar included (DWM's extended
 frame bounds), while the boxes are drawn over the client area, so `gameWindow.ts`
 returns both: boxes are scaled by the captured size and shifted by the client area's
