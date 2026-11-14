@@ -80,6 +80,8 @@ export class Tracker extends EventEmitter {
   private powerTail?: LogTail
   /** Lines waiting for drain(), oldest first. */
   private lineQueue: { lines: string[]; catchingUp: boolean; at: number }[] = []
+  /** The tail is part-way through one read: more lines are on their way. */
+  private moreComing = false
   private logDir?: string
   /**
    * We were watching this log folder before Power.log existed, so its first
@@ -299,6 +301,7 @@ export class Tracker extends EventEmitter {
       this.powerTail?.stop()
       this.powerTail = undefined
       this.lineQueue = [] // the old log's; never feed them to the new model
+      this.moreComing = false
       this.logDir = dir
       this.powerLogIsNew = false
       this.freshModel()
@@ -327,10 +330,11 @@ export class Tracker extends EventEmitter {
     let first = !this.powerLogIsNew
     // The replayed history is old: judge staleness by when the file was last written.
     this.lastLineAt = statSync(powerPath).mtimeMs
-    this.powerTail = new LogTail(powerPath, (lines) => {
+    // The catch-up is the whole first read, which arrives a chunk at a time.
+    this.powerTail = new LogTail(powerPath, (lines, more) => {
       if (!first) this.lastLineAt = Date.now()
-      this.feed(lines, first)
-      first = false
+      this.feed(lines, first, more)
+      if (!more) first = false
     })
     this.powerTail.start(offset)
     this.publish()
@@ -345,7 +349,8 @@ export class Tracker extends EventEmitter {
    * behind, so order is kept, and nothing is published until the queue is empty,
    * so a half-replayed game never reaches the overlays.
    */
-  private feed(lines: string[], catchingUp: boolean) {
+  private feed(lines: string[], catchingUp: boolean, more = false) {
+    this.moreComing = more
     this.lineQueue.push({ lines, catchingUp, at: 0 })
     if (this.lineQueue.length === 1) this.drain()
   }
@@ -549,7 +554,7 @@ export class Tracker extends EventEmitter {
 
   publish() {
     // Mid-replay: wait for the rest, so a half-replayed game never shows.
-    if (this.lineQueue.length && this.lastSnapshot) return this.schedulePublish()
+    if ((this.lineQueue.length || this.moreComing) && this.lastSnapshot) return this.schedulePublish()
     const base = this.bg.snapshot()
     let status: BgSnapshot['status']
     let statusDetail: string | undefined
