@@ -94,3 +94,17 @@ by bisecting startup with the user watching the mouse; traces showed nothing, be
 the cost is latency, not load. Offenders measured: the log replay on launch (~700ms),
 combat sims (17–84ms each, up to a 400ms budget), card data load (~46ms). The user chose
 to keep the hook and move or slice the work. See CLAUDE.md.
+
+What it took, all found with `--profile` (see development.md):
+
+- Sims run on a worker thread, spawned at launch (spawning it lazily blocked ~50ms).
+- The launch replay is fed in 8ms slices, and Power.log is read 1MB at a time, with
+  `lastGameOffset` searching backwards (a single game was 58MB of log).
+- Anything unavoidably slow happens before the first window exists, when there's no
+  hook yet: creating the capture's Direct3D device (~250ms, once per process, never
+  released) and parsing the card data.
+- Opening a capture session never waits for its first frame (that slept 300–400ms at
+  every shop); callers retry.
+- Overlay window settings are applied only when they change; re-applying them on every
+  publish cost 5–75ms.
+- What's left before the hook: creating the windows (~300ms), harmless to the cursor.
