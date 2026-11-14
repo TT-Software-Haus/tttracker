@@ -1,0 +1,36 @@
+# Builds the Windows installer and publishes it as a GitHub release, tagged
+# v<package.json version>. Runs on pushes to master, and is dispatched by
+# promote.yml, because merges made with GITHUB_TOKEN don't fire push events.
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: release
+
+jobs:
+  release:
+    runs-on: windows-latest # has cargo for the native capture module
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run dist -- --publish never
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=$(node -p "require('./package.json').version")
+          # Fails if v$v already exists: an unbumped version never overwrites a release.
+          gh release create "v$v" dist/*.exe --target "$GITHUB_SHA" --title "v$v" --generate-notes

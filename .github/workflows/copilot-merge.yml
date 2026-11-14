@@ -1,0 +1,41 @@
+# When Copilot reviews a PR into develop and leaves no comments on the current
+# head commit, approve it and merge it. Copilot itself can only comment, never
+# approve or merge, so the Actions bot does both on its verdict.
+name: Merge on Copilot review
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  merge:
+    if: >-
+      github.event.pull_request.base.ref == 'develop' &&
+      github.event.review.user.login == 'copilot-pull-request-reviewer[bot]' &&
+      github.event.review.commit_id == github.event.pull_request.head.sha
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      REVIEW: ${{ github.event.review.id }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      # The `copilot-review` status is the required check on develop's ruleset:
+      # each new push has none until Copilot reviews that commit clean.
+      - run: |
+          n=$(gh api "repos/$GH_REPO/pulls/$PR/reviews/$REVIEW/comments" --jq length)
+          if [ "$n" -gt 0 ]; then
+            gh api "repos/$GH_REPO/statuses/$SHA" -f state=failure -f context=copilot-review \
+              -f description="Copilot left $n comment(s)"
+            exit 0
+          fi
+          gh api "repos/$GH_REPO/statuses/$SHA" -f state=success -f context=copilot-review \
+            -f description="Copilot raised nothing"
+          gh pr review "$PR" --approve --body "Copilot reviewed this and raised nothing."
+          gh pr merge "$PR" --merge

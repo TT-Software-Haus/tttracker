@@ -1,0 +1,72 @@
+# A develop -> master PR merges only once package.json's version is above
+# master's. If it isn't, the bot asks; reply `/version x.y.z` on the PR and it
+# bumps develop, after which the PR's own run approves, merges and dispatches
+# the release.
+#
+# issue_comment runs this file from the default branch (develop), so it must
+# be on develop for `/version` to work.
+name: Promote to master
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, reopened, synchronize]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write # dispatch release.yml
+  contents: write
+  pull-requests: write
+
+concurrency: promote-${{ github.event.pull_request.number || github.event.issue.number }}
+
+jobs:
+  promote:
+    if: >-
+      (github.event_name == 'pull_request' && github.head_ref == 'develop') ||
+      (github.event.issue.pull_request && startsWith(github.event.comment.body, '/version') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      COMMENT: ${{ github.event.comment.body }} # via env, never interpolated into the script
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          # The deploy key is the only bypass on develop's ruleset, and unlike
+          # GITHUB_TOKEN its push fires `synchronize`, which approves and merges.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - run: |
+          set -euo pipefail
+          [ "$(gh pr view "$PR" --json headRefName,baseRefName --jq '.headRefName+"/"+.baseRefName')" = develop/master ] \
+            || { echo "Not a develop -> master PR."; exit 0; }
+
+          # ponytail: plain x.y.z only; pre-release tags would need real semver ordering.
+          newer() { node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number)); process.exit((a[0]-b[0]||a[1]-b[1]||a[2]-b[2])>0?0:1)' "$1" "$2"; }
+          current=$(git show origin/master:package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).version')
+          version=$(node -p 'require("./package.json").version')
+
+          if [ "$GITHUB_EVENT_NAME" = issue_comment ]; then
+            version=$(printf '%s\n' "$COMMENT" | head -n1 | sed -nE 's#^/version v?([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$#\1#p')
+            if [ -z "$version" ] || ! newer "$version" "$current"; then
+              gh pr comment "$PR" --body "Couldn't use that: reply \`/version x.y.z\` with a version above master's \`$current\`."
+              exit 1
+            fi
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            npm version "$version" --no-git-tag-version
+            git commit -am "chore: bump version to $version"
+            git push origin develop
+            exit 0 # the push re-runs this on `synchronize`, which approves and merges
+          elif ! newer "$version" "$current"; then
+            gh pr comment "$PR" --body "The version hasn't been bumped: develop is \`$version\`, master is \`$current\`. Reply \`/version x.y.z\` to set the new version."
+            exit 1
+          fi
+
+          gh pr review "$PR" --approve --body "Version bumped: $current -> $version."
+          gh pr merge "$PR" --merge
+          gh workflow run release.yml --ref master
