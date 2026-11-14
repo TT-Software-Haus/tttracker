@@ -158,10 +158,11 @@ user's mouse froze at random moments.
 from the pool minions that turn up (`IS_BACON_POOL_MINION`) was dropped: nothing shows
 before the hero is picked, some tribes only appear in round 2, and a dual-tribe card (a
 Demon/Naga) added Naga to a lobby, and a season, that had none. The hero-select screen
-lists them all in a text banner (Hearthstone's font,
-not icons). So from the moment heroes are offered (`BACON_HERO_CAN_BE_DRAFTED`),
-`Tracker` polls `readLobbyTribes()` every 2.5 s, up to 12 times, stopping once the hero
-is picked:
+lists them all in a text banner (Hearthstone's font, not icons). So the moment heroes
+are offered (`BACON_HERO_CAN_BE_DRAFTED`, on the GameState stream), `Tracker` reads
+`readLobbyTribes()`, then once a second until a read adds nothing new (two reads agree),
+the hero is picked, or 70 tries. A read before the banner is up costs a capture and a
+colour scan, with no OCR:
 
 1. `findBannerRect` locates the purple "Choose a Hero" plate by colour. A fixed
    window-relative rect was tried and dropped: tesseract needs a tight crop, and the
@@ -171,9 +172,10 @@ is picked:
 3. `parseTribeBanner` maps each word to the nearest tribe by Levenshtein, with the
    allowance scaled to word length; non-tribe words are dropped.
 
-Results accumulate across attempts and are the snapshot's `tribes`, and they're saved
-with the match. An empty read means "don't know": a failed read, or a tracker started
-after hero select, leaves the lobby's tribes unknown.
+Results accumulate across attempts and are the snapshot's `tribes`. They're saved with
+the match, and with the game's build choice (`build-choice.json`), so a tracker restarted
+mid-game gets them back. An empty read means "don't know": a failed read, or a tracker
+first started after hero select, leaves the lobby's tribes unknown.
 The tesseract worker is created lazily and its ~5 MB language data is cached in
 `userData/carddata/` (tesseract.js defaults to the working directory, which is wrong
 for a packaged app).

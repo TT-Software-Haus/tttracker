@@ -3,12 +3,14 @@ import { join } from 'node:path'
 import type { BgMatch, Build, Settings } from '../shared/types'
 import type { Placement } from './overlayLayout'
 
-/** The build answer for one game, so a tracker restart mid-game keeps it. */
+/** What the user and the screen said about one game, so a tracker restart mid-game keeps it. */
 export interface BuildChoice {
   /** Identifies the game: log folder plus its CREATE_GAME line. */
   game: string
   buildId?: string
   answered: boolean
+  /** The lobby's tribes, read off the hero-select screen. */
+  tribes?: string[]
 }
 
 const DEFAULT_SETTINGS: Settings = {

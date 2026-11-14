@@ -53,8 +53,8 @@ export function canPickBuild(
  */
 const GAME_OVER_LINGER_MS = 30_000
 /** Hero select lasts ~70s; retry the banner read across it, then give up. */
-const TRIBE_READ_ATTEMPTS = 12
-const TRIBE_READ_INTERVAL_MS = 2500
+const TRIBE_READ_ATTEMPTS = 70
+const TRIBE_READ_INTERVAL_MS = 1000
 /** Let the tavern's cards slide into place before the first read. */
 const HIGHLIGHT_SETTLE_MS = 250
 /** How often to re-read the tavern until the boxes settle. Reads take ~2.5ms. */
@@ -129,6 +129,8 @@ export class Tracker extends EventEmitter {
   /** Set once the prompt has been answered or dismissed, so it doesn't come back. */
   private buildPromptAnswered = false
   private tribeTimer?: NodeJS.Timeout
+  private tribeReading = false
+  private tribeGen = 0
   /** Boxes to draw over the tavern, in Hearthstone client coordinates. */
   private highlights: BgSnapshot['shopHighlights'] = []
   /** The tavern's contents when the current boxes were wanted; a change clears them. */
@@ -253,13 +255,21 @@ export class Tracker extends EventEmitter {
   private beginGame(key: string) {
     this.gameKey = key
     const c = this.store.buildChoice
-    if (c.game !== key) return
+    if (c.game !== key) {
+      // GameState runs ahead of PowerTaskList, so the tribes may have been
+      // read already, and saved under the last game's key; save them under
+      // this one.
+      if (this.screenTribes.length) this.rememberChoice()
+      return
+    }
     this.selectedBuildId = c.buildId
     this.buildPromptAnswered = c.answered
+    // A restart mid-game: the banner's long gone, so this is the only copy.
+    if (c.tribes?.length) this.screenTribes = c.tribes
   }
 
   private rememberChoice() {
-    if (this.gameKey) this.store.setBuildChoice({ game: this.gameKey, buildId: this.selectedBuildId, answered: this.buildPromptAnswered })
+    if (this.gameKey) this.store.setBuildChoice({ game: this.gameKey, buildId: this.selectedBuildId, answered: this.buildPromptAnswered, tribes: this.screenTribes })
   }
 
   // ------------------------------------------------------------- log plumbing
@@ -336,15 +346,21 @@ export class Tracker extends EventEmitter {
   }
 
   /**
-   * Poll the hero-select screen until the banner reads. One shot isn't enough:
-   * the plate slides in, so an early capture finds a half-drawn banner. Hero
-   * select lasts a minute or so, which is plenty of room to retry.
+   * Poll the hero-select screen until the banner reads, starting the moment the
+   * heroes are offered. One shot isn't enough: the plate slides in, so an early
+   * capture finds a half-drawn banner (or none yet; that costs a capture and a
+   * colour scan, ~15ms, with no OCR). Done once a read adds nothing new, i.e.
+   * two reads agree, so OCR runs only a few times.
    *
    * Fire-and-forget throughout — a slow or failed read must never hold up log
-   * parsing, and giving up just means falling back to the log's own tribe list.
+   * parsing, and giving up just leaves the lobby's tribes unknown.
    */
   private startTribeRead() {
-    if (this.tribeTimer) return
+    if (this.tribeReading) return
+    this.tribeReading = true
+    // Bumped by stopTribeRead, so a read still in flight from a cancelled
+    // loop (a new game started) is thrown away.
+    const gen = ++this.tribeGen
     let attempts = 0
     const tick = async () => {
       this.tribeTimer = undefined
@@ -353,6 +369,8 @@ export class Tracker extends EventEmitter {
         console.warn('could not read tribes from the hero-select screen', err)
         return [] as string[]
       })
+      if (gen !== this.tribeGen) return
+      let settled = false
       if (tribes.length) {
         // Accumulate rather than take the first answer. A capture during the
         // plate's slide-in, or one the OCR only half-read, gives a partial
@@ -361,26 +379,31 @@ export class Tracker extends EventEmitter {
         const merged = [...new Set([...this.screenTribes, ...tribes])].sort()
         if (merged.length !== this.screenTribes.length) {
           this.screenTribes = merged
+          this.rememberChoice()
           this.publish()
-        }
+        } else settled = true
       }
-      // Stop once the hero is locked in: the banner has gone, and anything we
+      // Stop once the hero is locked in, too: the banner has gone, and anything
       // read after that is some other screen.
-      if (attempts >= TRIBE_READ_ATTEMPTS || this.lookaheadHeroPicked) {
+      if (settled || attempts >= TRIBE_READ_ATTEMPTS || this.lookaheadHeroPicked) {
+        this.tribeReading = false
         stopCapture()
         return
       }
       this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
     }
-    this.tribeTimer = setTimeout(() => void tick(), TRIBE_READ_INTERVAL_MS)
+    void tick()
   }
 
   private stopTribeRead() {
-    if (!this.tribeTimer) return
+    this.tribeGen++
+    if (!this.tribeReading) return
+    this.tribeReading = false
     clearTimeout(this.tribeTimer)
     this.tribeTimer = undefined
     stopCapture()
   }
+
 
 
   /**
