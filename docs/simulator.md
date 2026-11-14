@@ -195,6 +195,21 @@ doubled, so parsing the actual card's text is correct without any special casing
 - **Murloc King** gives its Deathrattles at Start of Combat. On the first warband they
   arrive as enchantments (below); a reserve is assumed to have used it (approximated).
 
+## Trinkets
+
+`BoardInput.trinkets` carries each side's trinket card ids: `BATTLEGROUND_TRINKET`
+entities in play for that controller (checked on real logs: both sides' are there during
+a fight; the "Lesser/Greater Trinket" cards are empty slots). A reserve's trinkets aren't
+known.
+
+`compileTrinket(card, cards, afterStart)` reads them like card text, except that untimed
+sentences ("Get a Titus Rivendare.") happen when the trinket is bought and are skipped.
+With `afterStart` (the live path, Start of Combat already happened) the Start of Combat
+section is left out too. Each trinket becomes a stand-in minion in `side.standIns`,
+alongside the hero power's: never on the board, but included by `watchers(side)` in every
+trigger loop (deaths, summons, Avenge, attacks, shields, stat gains, Reborn, "when you
+have space"), and its auras apply to summons.
+
 ## Enchantments
 
 What a minion was given before the boards were captured (a Deathrattle from Murloc King or
@@ -234,6 +249,7 @@ npx tsx scripts/sim-coverage.ts cards.json                # tavern pool + Timewa
 npx tsx scripts/sim-coverage.ts cards.json --all          # every BG minion: tokens, rewards, rotated
 npx tsx scripts/sim-coverage.ts cards.json --hero-powers  # hero powers with combat text
 npx tsx scripts/sim-coverage.ts cards.json --enchantments # enchantments that give combat text
+npx tsx scripts/sim-coverage.ts cards.json --trinkets     # what trinkets do during combat
 ```
 
 Prints one line per card (and its golden version) whose text didn't compile, with the

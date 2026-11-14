@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CardDb } from '../src/main/cards/cardDb'
-import { Combat, mulberry32, type BoardInput, type MinionInput } from '../src/main/bg/sim/engine'
+import { Combat, mulberry32, simulateMany, type BoardInput, type MinionInput } from '../src/main/bg/sim/engine'
 
 const db = new CardDb()
 db.load(JSON.parse(readFileSync(join(__dirname, 'fixtures', 'cards-sim-rules.json'), 'utf8')))
@@ -152,5 +152,46 @@ describe('auras and keywords', () => {
     const c = fight(mine(m('BG20_205', 6, 6), m('BG32_432', 6, 6)))
     const bloodGem = (c as unknown as { sides: { bloodGem: { atk: number } }[] }).sides[0].bloodGem
     expect(bloodGem).toEqual({ atk: 1, hp: 1 }) // the base; auras are added when a Gem is played
+  })
+})
+
+// Trinkets act through stand-ins that never fight. Their Start of Combat part has happened before
+// the boards are captured; what they do during combat is simulated.
+describe('trinkets', () => {
+  const withTrinket = (trinket: string, ...minions: MinionInput[]) => fight({ minions, heroTier: 4, trinkets: [trinket] })
+
+  it('Feral Talisman: minions summoned in combat get the aura too', () => {
+    const c = withTrinket('BG30_MagicItem_880', m('BG28_300', 1, 1))
+    kill(c, 0, 0)
+    expect(stats(c)).toEqual(['Skeleton 3/2', 'Skeleton 3/2'])
+  })
+
+  it('Alliance Keychain: the first friendly death gives its stats to a friendly minion, once', () => {
+    const c = withTrinket('BG30_MagicItem_433', m(VAN, 4, 6), m(VAN, 1, 1))
+    kill(c, 0, 0) // only one minion left to receive it
+    expect(stats(c)).toEqual(['VANILLA 5/7'])
+    c.summon(c.sides[0], c.makeMinion({ name: 'Extra', atk: 9, hp: 9 }), 1)
+    kill(c, 0, 1) // a second death: no second gift
+    expect(stats(c)).toEqual(['VANILLA 5/7'])
+  })
+
+  it('Mechagon Adapter gives a Mech its Divine Shield back, 3 times per combat', () => {
+    const c = withTrinket('BG30_MagicItem_910', m('BG_BOT_312t', 1, 10, { divineShield: true }))
+    const bot = c.sides[0].minions[0]
+    for (let i = 0; i < 4; i++) c.damage(bot, 1)
+    expect([bot.divineShield, bot.hp]).toEqual([false, 10])
+    c.damage(bot, 1)
+    expect(bot.hp).toBe(9)
+  })
+
+  it('Twin Sky Lanterns copies the first minion summoned, once there is room', () => {
+    const c = withTrinket('BG30_MagicItem_822', m('BG28_300', 1, 1))
+    kill(c, 0, 0)
+    expect(stats(c)).toEqual(['Skeleton 1/1', 'Skeleton 1/1', 'Skeleton 1/1'])
+  })
+
+  it('Glowing Gauntlet is a shop trinket: nothing to simulate, nothing flagged', () => {
+    const r = simulateMany(db, { minions: [m(VAN, 1, 1)], heroTier: 1, trinkets: ['BG30_MagicItem_841'] }, wall, { iterations: 10, seed: 1, skipStartOfCombat: true })
+    expect([r.unsupported, r.approximated]).toEqual([[], []])
   })
 })

@@ -1,12 +1,13 @@
 // List Battlegrounds cards whose text the simulator doesn't understand.
-//   npx tsx scripts/sim-coverage.ts <cards.json from https://api.hearthstonejson.com/v1/latest/enUS/cards.json> [--all | --hero-powers | --enchantments]
+//   npx tsx scripts/sim-coverage.ts <cards.json from https://api.hearthstonejson.com/v1/latest/enUS/cards.json> [--all | --hero-powers | --enchantments | --trinkets]
 // By default checks what can be offered now: the tavern pool and the Timewarped
 // tavern. --all checks every Battlegrounds minion (tokens, hero rewards,
 // rotated-out cards) that could still show up. --hero-powers checks hero powers;
-// --enchantments the enchantments that give a minion combat text (Dark Gifts, Murloc King...).
+// --enchantments the enchantments that give a minion combat text (Dark Gifts, Murloc King...);
+// --trinkets what trinkets do during combat (their Start of Combat has happened before the boards are captured).
 import { readFileSync } from 'node:fs'
 import { CardDb, slim } from '../src/main/cards/cardDb'
-import { compileFx, compileHeroPower } from '../src/main/bg/sim/effects'
+import { compileFx, compileHeroPower, compileTrinket } from '../src/main/bg/sim/effects'
 import type { CardInfo } from '../src/shared/types'
 
 const db = new CardDb()
@@ -25,6 +26,17 @@ if (process.argv.includes('--hero-powers')) {
     console.log(`${p.id.padEnd(28)} ${p.name}: ${fx.unsupported.join(' | ')}`)
   }
   console.log(`\n${new Set(powers.map((p) => p.name)).size} hero powers checked; ${names.size} have unmodelled combat text.`)
+} else if (process.argv.includes('--trinkets')) {
+  const trinkets = raw.filter((c) => c.type === 'BATTLEGROUND_TRINKET' && c.set === 'BATTLEGROUNDS')
+  let bad = 0
+  for (const c of trinkets) {
+    const fx = compileTrinket(c, db, true)
+    if (!fx.unsupported.length) continue
+    bad++
+    console.log(`${c.id.padEnd(24)} ${c.name}: ${fx.unsupported.join(' | ')}`)
+  }
+  console.log(`
+${trinkets.length} trinkets checked; ${bad} have unmodelled combat text.`)
 } else if (process.argv.includes('--enchantments')) {
   let n = 0
   let bad = 0

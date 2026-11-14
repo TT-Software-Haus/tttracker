@@ -517,7 +517,7 @@ export class BgGame {
     // Hands: yours is always visible; for others Hearthstone copies the cards a
     // fight needs (e.g. for Diremuck Forager / Flighty Scout) into the log.
     const heroPower = this.cards.byDbfId(Number(hero?.tags.HERO_POWER ?? 0))?.id
-    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower, turn: this.round }
+    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower, turn: this.round, trinkets: this.trinketsOf(controller) }
     if (controller === this.game.friendlyPlayerId) {
       const mate = Number(this.game.playerEntity(controller)?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0)
       const mateBoard = mate ? this.lastTeammateBoard.get(mate) : undefined
@@ -560,6 +560,19 @@ export class BgGame {
     } finally {
       this.enchantIndex = undefined
     }
+  }
+
+  /**
+   * The trinkets fighting with a warband: BATTLEGROUND_TRINKET entities in play for its controller.
+   * Checked on real logs: both sides' are there during each fight. The "Lesser/Greater Trinket"
+   * cards are the empty slots.
+   */
+  private trinketsOf(controller: number | undefined): string[] | undefined {
+    if (controller === undefined) return undefined
+    const ids = [...this.game.entities.values()]
+      .filter((e) => e.tags.CARDTYPE === 'BATTLEGROUND_TRINKET' && e.tags.ZONE === 'PLAY' && this.game.controllerOf(e) === controller && !/^BG30_Trinket_/.test(e.cardId))
+      .map((e) => e.cardId)
+    return ids.length ? ids : undefined
   }
 
   private toInput(e: Entity): MinionInput {
