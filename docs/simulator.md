@@ -128,6 +128,18 @@ all the way to the UI as *"Not modelled: …"* under the odds.
 **Golden cards work for free** — they have their own text with the numbers already
 doubled, so parsing the actual card's text is correct without any special casing.
 
+## Hero powers
+
+`BoardInput.heroPower` and `reserve.heroPower` carry the hero power's card id.
+`compileHeroPower` looks it up by **name** in `HERO_POWERS` (so skins share a handler)
+and returns a `startOfCombat(c, side)` effect. It runs before the side's minions' Start
+of Combat: in `startOfCombat()` when that isn't skipped, and in `bringInReserves()`
+every time, because a Duos reserve is captured before the fight and its hero power
+fires as it enters. Then attack-immediately minions swing. A hero power with "Start of
+Combat" text and no handler is listed under `unsupported`.
+
+Modelled: Wingmen (Illidan).
+
 ## Known limitations
 
 - Shop auras ("Your other Murlocs have +2 Attack") are deliberately treated as no-ops,
@@ -144,8 +156,9 @@ doubled, so parsing the actual card's text is correct without any special casing
   silently.
 - Hard caps: 300 attack steps and 50 death-resolution passes. Hitting either truncates
   the fight (and probably reports a tie).
-- Per-combat trigger limits are parsed away but not enforced, except where a manual
-  handler counts them itself.
+- Per-combat trigger limits ("Twice per combat") are enforced on generic triggers;
+  manual handlers count their own.
+- Hero powers: only those in `HERO_POWERS` (`effects.ts`) are modelled; see below.
 
 ## Checking coverage after a patch
 

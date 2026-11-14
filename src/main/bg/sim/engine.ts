@@ -14,7 +14,7 @@
 //   The winner deals their tavern tier + the tiers of their surviving minions.
 
 import type { CardInfo } from '../../../shared/types'
-import { compileFx, type CardFx, type EffectEvent, type TriggerKind } from './effects'
+import { compileFx, compileHeroPower, type CardFx, type EffectEvent, type HeroPowerFx, type TriggerKind } from './effects'
 
 export interface CardSource {
   get(cardId: string | undefined): CardInfo | undefined
@@ -68,7 +68,9 @@ export interface Side {
   /** Teammate's warband in Duos (for Sandy). */
   teammate: MinionInput[]
   /** Duos: teammate's warband waiting to come in. */
-  reserve?: { minions: MinionInput[]; heroTier: number; hand?: MinionInput[] }
+  reserve?: ReserveInput
+  /** The hero power fighting for this side (card id), if it acts in combat. */
+  heroPower?: string
   /** "When you have space, summon ... from your hand" effects still waiting for room. */
   pendingFromHand: { tribe: string; left: number }[]
 }
@@ -95,8 +97,18 @@ export interface BoardInput {
   heroTier: number
   hand?: MinionInput[]
   teammate?: MinionInput[]
+  /** Hero power card id. Its Start of Combat effect runs unless Start of Combat is skipped. */
+  heroPower?: string
   /** Duos: the teammate's warband (and hand) that takes over when this one is wiped out. */
-  reserve?: { minions: MinionInput[]; heroTier: number; hand?: MinionInput[] }
+  reserve?: ReserveInput
+}
+
+/** Duos: a warband waiting to come in. Its hero power fires as it enters. */
+export interface ReserveInput {
+  minions: MinionInput[]
+  heroTier: number
+  hand?: MinionInput[]
+  heroPower?: string
 }
 
 export interface CombatOutcome {
@@ -127,6 +139,7 @@ export class Combat {
   readonly sides: [Side, Side]
   private uid = 1
   private fxCache: Map<string, CardFx>
+  private heroPowerCache = new Map<string, HeroPowerFx>()
 
   constructor(
     readonly cards: CardSource,
@@ -152,6 +165,7 @@ export class Combat {
       hand: (input.hand ?? []).map((m) => this.fromInput(m)),
       teammate: input.teammate ?? [],
       reserve: input.reserve?.minions.length ? input.reserve : undefined,
+      heroPower: input.heroPower,
       pendingFromHand: [],
     }
     for (const m of input.minions.slice(0, MAX_BOARD)) side.minions.push(this.fromInput(m))
@@ -437,7 +451,8 @@ export class Combat {
     // Minions with Start of Combat effects, first attacker's side first, left to right.
     for (const idx of [first, 1 - first]) {
       const side = this.sides[idx]
-      // Effects that trigger from hand (e.g. Flighty Scout) go first.
+      // Hero powers go first, then effects that trigger from hand (e.g. Flighty Scout).
+      this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
       for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
       for (const m of [...side.minions]) {
         if (this.isDead(m)) continue
@@ -445,16 +460,27 @@ export class Combat {
       }
       this.resolveDeaths(side)
     }
-    // "Attack immediately" minions.
-    for (const idx of [first, 1 - first]) {
-      const side = this.sides[idx]
-      for (const m of [...side.minions]) {
-        if (m.attackImmediately && !this.isDead(m) && this.alive(this.other(side)).length) {
-          m.attackImmediately = false
-          this.singleAttack(side, m)
-        }
+    for (const idx of [first, 1 - first]) this.attackImmediately(this.sides[idx])
+  }
+
+  /** "Attack immediately" minions (Start of Combat effects, Wingmen) take their attack now. */
+  private attackImmediately(side: Side) {
+    for (const m of [...side.minions]) {
+      if (m.attackImmediately && !this.isDead(m) && this.alive(this.other(side)).length) {
+        m.attackImmediately = false
+        this.singleAttack(side, m)
       }
     }
+  }
+
+  private heroPowerFx(cardId: string | undefined): HeroPowerFx {
+    if (!cardId) return { unsupported: [] }
+    let fx = this.heroPowerCache.get(cardId)
+    if (!fx) {
+      fx = compileHeroPower(this.cards.get(cardId))
+      this.heroPowerCache.set(cardId, fx)
+    }
+    return fx
   }
 
   /** Swap in the teammate's warband for any side that has been wiped out. */
@@ -471,10 +497,14 @@ export class Combat {
       side.nameBonus = new Map()
       side.tribeBonus = new Map()
       side.pendingFromHand = []
-      // The incoming warband's Start of Combat effects fire as it enters.
+      side.heroPower = r.heroPower
+      // The incoming warband's Start of Combat effects fire as it enters: hero power first
+      // (seen live: Illidan's Wingmen buffed the reserve before anything else happened).
+      this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
       for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
       for (const m of [...side.minions]) if (!this.isDead(m) && m.fx.startOfCombat) this.run(m.fx.startOfCombat, m, side)
       this.resolveDeaths(side)
+      this.attackImmediately(side)
       swapped = true
     }
     return swapped
@@ -678,6 +708,12 @@ export function simulateMany(
       const fx = fxCache.get(m.cardId) ?? compileFx(cards.get(m.cardId), cards)
       if (fx.unsupported.length) unsupported.add(cards.get(m.cardId)?.name ?? m.cardId)
     }
+  // Hero powers only act at Start of Combat: a reserve's always does, the first warbands' only if it hasn't happened yet.
+  const powers = [a, b].flatMap((board) => [opts.skipStartOfCombat ? undefined : board.heroPower, board.reserve?.heroPower])
+  for (const id of powers) {
+    const card = id ? cards.get(id) : undefined
+    if (card && compileHeroPower(card).unsupported.length) unsupported.add(card.name)
+  }
   return {
     win: win / n,
     tie: tie / n,

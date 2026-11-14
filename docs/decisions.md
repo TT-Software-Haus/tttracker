@@ -117,3 +117,19 @@ What it took, all found with `--profile` (see development.md):
 - Overlay window settings are applied only when they change; re-applying them on every
   publish cost 5–75ms.
 - What's left before the hook: creating the windows (~300ms), harmless to the cursor.
+
+## Hero powers in the simulator
+
+- **Duos reserves need their hero power simulated.** Boards are captured at the first
+  attack, after Start of Combat, so the first warbands' hero powers have already acted.
+  A reserve warband is read from the copies Hearthstone makes *before* the fight, and
+  its hero power fires as it comes in. Found on a real tie the sim called a certain loss:
+  the teammate's Illidan (Wingmen, +2/+1 and attack immediately) made Dark Paradox a 9/9
+  that survived Crackling Cyclone. Order on entry, as logged: hero power, then the
+  warband's own Start of Combat, then attack-immediately.
+- Each Duos hero copy carries `HERO_POWER` (a dbfId), which is how the reserve's power
+  is found.
+- Hero powers are keyed by name, so skins share one handler. One whose text has
+  "Start of Combat" but no handler shows under "Not modelled".
+- **"(Twice per combat.)" limits are now enforced** on generic triggers. The engine
+  already counted them; the compiler parsed the limit away and never passed it on.

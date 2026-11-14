@@ -34,6 +34,8 @@ export class BgGame {
   private combatCreated: Entity[] = []
   private warbandIds = new Set<number>()
   private duoBoards = new Map<number, Entity[]>()
+  /** Duos: each warband's hero power (dbfId), from the hero copies made before the fight. */
+  private duoHeroPowers = new Map<number, number>()
   private duoHands = new Map<number, Entity[]>()
   private enteredPids = new Set<number>()
   private resimPending = false
@@ -132,6 +134,7 @@ export class BgGame {
     this.combatCreated = []
     this.warbandIds.clear()
     this.duoBoards.clear()
+    this.duoHeroPowers.clear()
     this.duoHands.clear()
     this.enteredPids.clear()
     this.resimPending = false
@@ -206,6 +209,7 @@ export class BgGame {
         this.warbandIds = new Set(this.minionEntities(this.game.friendlyPlayerId).map((m) => m.id))
         this.combatCreated = []
         this.duoBoards.clear()
+    this.duoHeroPowers.clear()
         this.enteredPids.clear()
       }
       return
@@ -292,6 +296,7 @@ export class BgGame {
    */
   private groupDuoBoards() {
     this.duoBoards.clear()
+    this.duoHeroPowers.clear()
     this.duoHands.clear()
     const me = this.game.friendlyPlayerId!
     let cur: number | undefined
@@ -307,6 +312,7 @@ export class BgGame {
       if (e.tags.CARDTYPE === 'HERO' && e.tags.PLAYER_ID && zone === 'SETASIDE') {
         cur = Number(e.tags.PLAYER_ID)
         if (!this.duoBoards.has(cur)) this.duoBoards.set(cur, [])
+        if (e.tags.HERO_POWER) this.duoHeroPowers.set(cur, Number(e.tags.HERO_POWER))
         continue
       }
       if (e.tags.CARDTYPE !== 'MINION' || (zone !== 'SETASIDE' && zone !== 'HAND')) continue
@@ -392,7 +398,8 @@ export class BgGame {
     const pid = this.reservePid(side)
     const ents = pid === undefined ? undefined : this.duoBoards.get(pid)
     if (!ents?.length) return undefined
-    return { minions: ents.map((e) => this.toInput(e)), heroTier: Number(this.lobbyHero(pid)?.tags.PLAYER_TECH_LEVEL ?? 1), hand: this.handFor(pid) }
+    const power = this.cards.byDbfId(this.duoHeroPowers.get(pid!) ?? 0)?.id
+    return { minions: ents.map((e) => this.toInput(e)), heroTier: Number(this.lobbyHero(pid)?.tags.PLAYER_TECH_LEVEL ?? 1), hand: this.handFor(pid), heroPower: power }
   }
 
   private captureBoards(round: CombatRound, initial: boolean) {
@@ -509,7 +516,8 @@ export class BgGame {
     const minions = this.minionEntities(controller).map((e) => this.toInput(e))
     // Hands: yours is always visible; for others Hearthstone copies the cards a
     // fight needs (e.g. for Diremuck Forager / Flighty Scout) into the log.
-    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined) }
+    const heroPower = this.cards.byDbfId(Number(hero?.tags.HERO_POWER ?? 0))?.id
+    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower }
     if (controller === this.game.friendlyPlayerId) {
       const mate = Number(this.game.playerEntity(controller)?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0)
       const mateBoard = mate ? this.lastTeammateBoard.get(mate) : undefined

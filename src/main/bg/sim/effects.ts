@@ -451,6 +451,13 @@ function parseBody(body: string, cards: CardSource, self: CardInfo | undefined, 
 
 const HEADER_RE = /((?:Battlecry, |Battlecry and )?(?:Deathrattle, and Rally|Deathrattle|Start of Combat|Rally)|Battlecry|Avenge \((\d+)\)|Activate \(\d+\)|Spellcraft)\s*:|(Choose One) -/g
 
+/** "(Twice per combat.)" style limits, anywhere in the card text. */
+function perCombatLimit(text: string): number | undefined {
+  const m = /\((once|twice|(\d+) times) per combat\.?\)/i.exec(text)
+  if (!m) return undefined
+  return m[1].toLowerCase() === 'once' ? 1 : m[1].toLowerCase() === 'twice' ? 2 : Number(m[2])
+}
+
 /** Subject phrases for friendly triggers: "a friendly Beast", "another friendly Taunt minion", "a friendly Deathrattle minion"... */
 function parseSubject(phrase: string): Pick<Trigger, 'tribe' | 'needTaunt' | 'needDeathrattle' | 'excludeSelf'> | undefined {
   const m = /^(a|another|a different) friendly (taunt minion|deathrattle minion|minion with taunt|minion|\w+)$/i.exec(phrase.trim())
@@ -592,7 +599,7 @@ export function compileFx(card: CardInfo | undefined, cards: CardSource): CardFx
   for (const raw of leading.split(/(?<=\.)\s+/).map((x) => x.trim()).filter(Boolean)) {
     const sentence = raw.replace(KEYWORDS, '').trim()
     if (!sentence) continue
-    if (parseTriggerSentence(sentence, cards, card, fx, problems)) continue
+    if (parseTriggerSentence(sentence, cards, card, fx, problems, perCombatLimit(text))) continue
     if (SHOP_TRIGGER.test(sentence) || /Can Magnetize|Has \+\d/.test(sentence)) continue
     if (/attack|dies|summon|reborn|divine shield|damage|combat/i.test(sentence)) problems.push(sentence)
   }
@@ -884,4 +891,46 @@ const MANUAL: Record<string, Manual> = {
       },
     ]
   },
+}
+
+// ---------------------------------------------------------------- hero powers
+
+/** A hero power's combat effect. It acts for the whole side, so there's no minion behind it. */
+export type HeroPowerEffect = (c: Combat, side: Side) => void
+
+export interface HeroPowerFx {
+  startOfCombat?: HeroPowerEffect
+  /** Combat text we don't model yet (empty = fully modelled, or no combat effect). */
+  unsupported: string[]
+}
+
+/**
+ * Hero powers that act in combat. Keyed by name rather than id, so skins and
+ * alternate versions share a handler.
+ *
+ * Only matters where Start of Combat hasn't already happened by the time the
+ * boards are captured, which on the live path means a Duos reserve: its board
+ * is copied before the fight, and the hero power fires as it comes in.
+ */
+const HERO_POWERS: Record<string, (fx: HeroPowerFx) => void> = {
+  // Illidan Stormrage – Start of Combat: your left- and right-most minions gain +2/+1 and attack immediately.
+  Wingmen: (fx) => {
+    fx.startOfCombat = (c, side) => {
+      const alive = c.alive(side)
+      for (const m of new Set([alive[0], alive[alive.length - 1]])) {
+        if (!m) continue
+        c.buff(m, 2, 1)
+        m.attackImmediately = true
+      }
+    }
+  },
+}
+
+export function compileHeroPower(card: CardInfo | undefined): HeroPowerFx {
+  const fx: HeroPowerFx = { unsupported: [] }
+  if (!card) return fx
+  const manual = HERO_POWERS[card.name]
+  if (manual) manual(fx)
+  else if (/Start of Combat/i.test(card.text ?? '')) fx.unsupported.push(cleanText(card.text))
+  return fx
 }
