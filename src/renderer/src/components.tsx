@@ -135,6 +135,7 @@ export function OddsBar({ odds, compact, fightKey }: { odds: SimOdds; compact?: 
       </div>
       {odds.partial && <div className="odds-warn">Only the boards fighting now: a teammate’s warband wasn’t visible yet.</div>}
       {odds.unsupported.length > 0 && <div className="odds-warn">Not modelled: {odds.unsupported.join(', ')}</div>}
+      {!!odds.approximated?.length && <div className="odds-warn">Approximated: {odds.approximated.join(', ')}</div>}
     </div>
   )
 }

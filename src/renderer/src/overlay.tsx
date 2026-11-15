@@ -77,7 +77,7 @@ function OddsOverlay({ snap }: { snap: BgSnapshot }) {
           <span>vs {c.opponentHeroName ?? 'opponent'}</span>
           <ResultBadge result={c.result} damage={c.damage} />
         </div>
-        <OddsBar odds={c.odds} compact fightKey={c.round} />
+        <OddsBar odds={c.liveOdds ?? c.odds} compact fightKey={c.round} />
       </div>
     )
   }

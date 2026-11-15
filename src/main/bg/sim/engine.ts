@@ -14,7 +14,7 @@
 //   The winner deals their tavern tier + the tiers of their surviving minions.
 
 import type { CardInfo } from '../../../shared/types'
-import { compileFx, type CardFx, type EffectEvent, type TriggerKind } from './effects'
+import { compileFx, compileHeroPower, compileTrinket, type CardFx, type Effect, type EffectEvent, type HeroPowerFx, type TriggerKind } from './effects'
 
 export interface CardSource {
   get(cardId: string | undefined): CardInfo | undefined
@@ -51,6 +51,16 @@ export interface Minion {
   fx: CardFx
   /** Uses of limited triggers ("Twice per combat") so far. */
   uses?: Map<object, number>
+  /** Deathrattles and Rallies given to this minion in combat ("give a friendly Beast this Deathrattle"). */
+  grantedDeathrattles?: Effect[][]
+  grantedRallies?: Effect[][]
+  grantedStartOfCombat?: Effect[][]
+  /** "This is Reborn with full Health and enchantments" (all) / "with full Attack" (atk). */
+  rebornFull?: boolean | 'atk'
+  /** Hits its Divine Shield can still take ("takes 3 hits to break"). */
+  shieldHits?: number
+  /** "It takes double damage this combat." */
+  doubleDamage?: boolean
 }
 
 export interface Side {
@@ -68,9 +78,32 @@ export interface Side {
   /** Teammate's warband in Duos (for Sandy). */
   teammate: MinionInput[]
   /** Duos: teammate's warband waiting to come in. */
-  reserve?: { minions: MinionInput[]; heroTier: number; hand?: MinionInput[] }
+  reserve?: ReserveInput
+  /** The hero power fighting for this side (card id), if it acts in combat. */
+  heroPower?: string
+  /**
+   * Stand-ins for the hero power and trinkets, carrying their all-combat effects. Never on the
+   * board; the engine's trigger loops include them (see watchers()).
+   */
+  standIns: Minion[]
+  trinkets: string[]
+  turn?: number
   /** "When you have space, summon ... from your hand" effects still waiting for room. */
   pendingFromHand: { tribe: string; left: number }[]
+  /** The warband as this fight (or this reserve) began, for "a minion from the opponent's warband". */
+  start: MinionInput[]
+  /** Friendly minions that died this combat, in order, as they were when they died. */
+  dead: Minion[]
+  /** "For the rest of this combat, after you summon a Pirate, give it +5 Attack." Applied to each summon. */
+  summonBuffs: { pred: (m: Minion) => boolean; atk: number; hp: number }[]
+  /** Attacks left that are Immune while Attacking (Eclipsion Illidari). */
+  immuneAttacks: number
+  /** The first minion summoned this combat (Twin Sky Lanterns). */
+  firstSummon?: Minion
+  /** Effects waiting for room on the board ("Avenge (7): When you have space, summon ..."). */
+  pendingSpace: (() => void)[]
+  /** What one Blood Gem gives. +1/+1 unless something in combat upgrades it; game-long upgrades aren't visible. */
+  bloodGem: { atk: number; hp: number }
 }
 
 /** Input description of one minion on a board. */
@@ -88,6 +121,13 @@ export interface MinionInput {
   reborn?: boolean
   stealth?: boolean
   tier?: number
+  /**
+   * Card ids of enchantments on it that act in combat ("Deathrattle: Summon a 1/1 Murloc." from
+   * Murloc King). Stat and keyword enchantments are already in the numbers above.
+   */
+  enchantments?: string[]
+  /** Mid-fight: deaths its Avenge has counted so far (SCORE_VALUE_2 in the log). */
+  avenge?: number
 }
 
 export interface BoardInput {
@@ -95,8 +135,26 @@ export interface BoardInput {
   heroTier: number
   hand?: MinionInput[]
   teammate?: MinionInput[]
+  /** Hero power card id. Its Start of Combat effect runs unless Start of Combat is skipped. */
+  heroPower?: string
+  /** The shop turn this fight follows, for hero powers that unlock later ("Unlocks on Turn 7"). */
+  turn?: number
+  /** Trinket card ids. What they do during combat applies all fight; Start of Combat only if it hasn't happened. */
+  trinkets?: string[]
+  /** Mid-fight: index of the minion that attacks next on this side (default: the left-most). */
+  nextAttacker?: number
+  /** Mid-fight: this side's minions that have died so far this fight, in order. */
+  dead?: MinionInput[]
   /** Duos: the teammate's warband (and hand) that takes over when this one is wiped out. */
-  reserve?: { minions: MinionInput[]; heroTier: number; hand?: MinionInput[] }
+  reserve?: ReserveInput
+}
+
+/** Duos: a warband waiting to come in. Its hero power fires as it enters. */
+export interface ReserveInput {
+  minions: MinionInput[]
+  heroTier: number
+  hand?: MinionInput[]
+  heroPower?: string
 }
 
 export interface CombatOutcome {
@@ -127,6 +185,7 @@ export class Combat {
   readonly sides: [Side, Side]
   private uid = 1
   private fxCache: Map<string, CardFx>
+  private heroPowerCache = new Map<string, HeroPowerFx>()
 
   constructor(
     readonly cards: CardSource,
@@ -146,16 +205,73 @@ export class Combat {
       idx,
       minions: [],
       heroTier: input.heroTier,
-      nextAttacker: 0,
+      nextAttacker: input.nextAttacker ?? 0,
       nameBonus: new Map(),
       tribeBonus: new Map(),
       hand: (input.hand ?? []).map((m) => this.fromInput(m)),
       teammate: input.teammate ?? [],
       reserve: input.reserve?.minions.length ? input.reserve : undefined,
+      heroPower: input.heroPower,
+      turn: input.turn,
       pendingFromHand: [],
+      bloodGem: { atk: 1, hp: 1 },
+      start: input.minions,
+      dead: [],
+      summonBuffs: [],
+      immuneAttacks: 0,
+      standIns: [],
+      trinkets: input.trinkets ?? [],
+      pendingSpace: [],
     }
     for (const m of input.minions.slice(0, MAX_BOARD)) side.minions.push(this.fromInput(m))
+    side.dead = (input.dead ?? []).map((m) => this.fromInput(m))
+    side.standIns = this.standInsFor(side)
+    this.warbandAuras(side)
     return side
+  }
+
+  private standInsFor(side: Side): Minion[] {
+    const out: Minion[] = []
+    const hero = this.heroStandIn(side)
+    if (hero) out.push(hero)
+    for (const id of side.trinkets) {
+      const t = this.makeMinion({ name: this.cards.get(id)?.name ?? 'Trinket', atk: 0, hp: 1 })
+      t.cardId = id
+      t.fx = this.trinketFx(id)
+      out.push(t)
+    }
+    return out
+  }
+
+  private trinketCache = new Map<string, CardFx>()
+  private trinketFx(id: string): CardFx {
+    let fx = this.trinketCache.get(id)
+    if (!fx) {
+      fx = compileTrinket(this.cards.get(id), this.cards, true)
+      this.trinketCache.set(id, fx)
+    }
+    return fx
+  }
+
+  /** Everything on a side that reacts to events: its minions, then the hero power and trinket stand-ins. */
+  watchers(side: Side): Minion[] {
+    return side.standIns.length ? [...side.minions, ...side.standIns] : [...side.minions]
+  }
+
+  /** What a warband's minions do for the whole fight from the start: auras on summons, first-attack immunity. */
+  private warbandAuras(side: Side) {
+    side.immuneAttacks = side.minions.reduce((n, m) => n + (m.fx.immuneFirstAttacks ?? 0), 0)
+    for (const m of [...side.minions, ...side.standIns]) if (m.fx.summonAura) side.summonBuffs.push(m.fx.summonAura)
+  }
+
+  /** A hero power's all-combat effects, on a stand-in minion the engine treats like one of yours. */
+  private heroStandIn(side: Side): Minion | undefined {
+    const fx = this.heroPowerFx(side.heroPower)
+    if (!fx.passive) return undefined
+    if (fx.unlockTurn !== undefined && side.turn !== undefined && side.turn < fx.unlockTurn) return undefined
+    const hero = this.makeMinion({ name: this.cards.get(side.heroPower)?.name ?? 'Hero', atk: 0, hp: 1 })
+    hero.fx = fx.passive
+    return hero
   }
 
   /** Build a live minion from an input description (also used for copies from hand / teammate). */
@@ -165,6 +281,15 @@ export class Combat {
 
   newUid() {
     return this.uid++
+  }
+
+  startingBoard(side: Side): MinionInput[] {
+    return side.start
+  }
+
+  /** A fresh copy of a minion (e.g. one summoned from hand), keeping its stats and keywords. */
+  minionCopy(m: Minion): Minion {
+    return { ...m, uid: this.newUid(), uses: undefined }
   }
 
   /** Summon from hand for any "when you have space" effects that are waiting. */
@@ -178,7 +303,7 @@ export class Combat {
         }
         side.hand.splice(side.hand.indexOf(best), 1)
         p.left--
-        this.summon(side, { ...best, uid: this.newUid() }, side.minions.length)
+        this.summon(side, { ...best, uid: this.newUid() }, side.minions.length, true)
       }
     }
     side.pendingFromHand = side.pendingFromHand.filter((p) => p.left > 0)
@@ -194,6 +319,17 @@ export class Combat {
   }
 
   private fromInput(m: MinionInput): Minion {
+    const minion = this.fromInputBare(m)
+    for (const id of m.enchantments ?? []) {
+      const fx = this.fx(id)
+      if (fx.deathrattle?.length) (minion.grantedDeathrattles ??= []).push(fx.deathrattle)
+      if (fx.rally?.length) (minion.grantedRallies ??= []).push(fx.rally)
+      if (fx.startOfCombat?.length) (minion.grantedStartOfCombat ??= []).push(fx.startOfCombat)
+    }
+    return minion
+  }
+
+  private fromInputBare(m: MinionInput): Minion {
     const card = this.cards.get(m.cardId)
     return {
       uid: this.uid++,
@@ -214,9 +350,11 @@ export class Combat {
       reborn: !!m.reborn,
       stealth: !!m.stealth,
       destroyed: false,
-      avenge: 0,
+      avenge: m.avenge ?? 0,
       attackImmediately: false,
       fx: this.fx(m.cardId),
+      shieldHits: this.fx(m.cardId).shieldHits,
+      rebornFull: this.fx(m.cardId).rebornFull,
     }
   }
 
@@ -275,7 +413,7 @@ export class Combat {
    * attacked", ...) on `side`. `subject` is the minion the event is about.
    */
   fire(side: Side, kind: TriggerKind, subject: Minion, ev: EffectEvent = {}) {
-    for (const f of [...side.minions]) {
+    for (const f of this.watchers(side)) {
       if (this.isDead(f) || !f.fx.triggers) continue
       for (const t of f.fx.triggers) {
         if (t.on !== kind) continue
@@ -311,15 +449,61 @@ export class Combat {
     m.atk = Math.max(0, m.atk + atk)
     m.hp += hp
     m.maxHp += hp
+    if (atk <= 0 && hp <= 0) return
+    // "Whenever a friendly minion gains Attack" / "After this gains stats". Hand minions have no side and trigger nothing.
+    const side = this.sideOf(m)
+    if (!side || this.gainDepth > 20) return
+    this.gainDepth++
+    for (const f of this.watchers(side)) {
+      if (this.isDead(f) || !f.fx.onGainStats) continue
+      for (const t of f.fx.onGainStats) {
+        if (t.selfOnly ? f !== m : false) continue
+        if (t.needAtk && atk <= 0) continue
+        this.run(t.effects, f, side, { other: m, atk, hp })
+      }
+    }
+    this.gainDepth--
+  }
+  private gainDepth = 0
+
+  /**
+   * Trigger a minion's Deathrattle(s), its own and any it was given, as if it died at
+   * `pos` (also used by "trigger a friendly Deathrattle" effects on living minions).
+   * Then "after you trigger a Deathrattle" effects fire.
+   */
+  triggerDeathrattle(m: Minion, side: Side, pos: number) {
+    const all = [...(m.fx.deathrattle ? [m.fx.deathrattle] : []), ...(m.grantedDeathrattles ?? [])]
+    for (const effects of all) {
+      this.run(effects, m, side, { pos })
+      for (const f of this.watchers(side)) if (!this.isDead(f) && f.fx.afterDeathrattle) this.run(f.fx.afterDeathrattle, f, side, { other: m })
+    }
+  }
+
+  hasDeathrattle(m: Minion) {
+    return !!m.fx.deathrattle?.length || !!m.grantedDeathrattles?.length
   }
 
   /** Deal damage from `source` (may be undefined for effects). Returns damage actually taken. */
   damage(target: Minion, amount: number, source?: Minion): number {
     if (amount <= 0 || this.isDead(target)) return 0
+    if (target.doubleDamage) amount *= 2
     if (target.divineShield) {
+      if (target.shieldHits && target.shieldHits > 1) {
+        target.shieldHits--
+        return 0
+      }
       target.divineShield = false
       this.onShieldLost(target)
       return 0
+    }
+    // Mad Matador: "When this would take damage, deal it to a random enemy minion instead. (Once per combat.)"
+    if (target.fx.redirectDamage && !target.uses?.has(target.fx)) {
+      const side = this.sideOf(target)
+      const victim = side && this.pick(this.alive(this.other(side)))
+      if (victim) {
+        ;(target.uses ??= new Map()).set(target.fx, 1)
+        return this.damage(victim, amount, target)
+      }
     }
     target.hp -= amount
     if (source && (source.venomous || source.poisonous) && target.hp > 0) {
@@ -349,7 +533,7 @@ export class Combat {
   private onDamageDealt(source: Minion) {
     const side = this.sideOf(source)
     if (!side) return
-    for (const f of side.minions) {
+    for (const f of this.watchers(side)) {
       if (this.isDead(f) || !f.fx.onFriendlyDamage) continue
       for (const t of f.fx.onFriendlyDamage) {
         if (t.excludeSelf && f === source) continue
@@ -359,17 +543,41 @@ export class Combat {
     }
   }
 
-  summon(side: Side, m: Minion, pos: number): Minion | undefined {
-    if (this.alive(side).length >= MAX_BOARD) return undefined
+  /** Minions summoned by the current effect, for "Give them Taunt" / "This plays a Blood Gem on them". */
+  batch: Minion[] = []
+
+  /**
+   * Put a minion on the board. `plain` is for Reborn, hand summons and the extra copies below:
+   * anything that isn't a card's summon, so it isn't multiplied again.
+   */
+  summon(side: Side, m: Minion, pos: number, plain = false): Minion | undefined {
+    if (this.alive(side).length >= MAX_BOARD) {
+      for (const f of this.watchers(side)) if (!this.isDead(f) && f.fx.onSummonFail) this.run(f.fx.onSummonFail, f, side, { other: m })
+      return undefined
+    }
+    for (const b of side.summonBuffs) if (b.pred(m)) this.buff(m, b.atk, b.hp)
     const nb = side.nameBonus.get(m.name)
     if (nb) this.buff(m, nb.atk, nb.hp)
     for (const [tribe, b] of side.tribeBonus) if (hasTribe(m, tribe)) this.buff(m, b.atk, b.hp)
     pos = Math.max(0, Math.min(pos, side.minions.length))
     side.minions.splice(pos, 0, m)
     this.lastSummoned = m
+    side.firstSummon ??= m
     if (pos < side.nextAttacker) side.nextAttacker++
-    for (const f of [...side.minions]) {
+    for (const f of this.watchers(side)) {
       if (f !== m && !this.isDead(f) && f.fx.onSummon) this.run(f.fx.onSummon, f, side, { other: m })
+    }
+    this.batch.push(m)
+    if (!plain) {
+      // Khadgar: card summons summon twice (three times) as many. Bonerender: an extra copy of a different minion.
+      let extra = 0
+      for (const f of side.minions) {
+        if (this.isDead(f)) continue
+        extra += f.fx.summonExtra ?? 0
+        if (f !== m && f.fx.copySummons) extra += f.fx.copySummons
+      }
+      let at = side.minions.indexOf(m) + 1
+      for (let k = 0; k < extra; k++) if (this.summon(side, this.minionCopy(m), at, true)) at++
     }
     return m
   }
@@ -383,7 +591,7 @@ export class Combat {
     const side = this.sideOf(m)
     if (!side) return
     if (m.fx.tauntWhileShielded) m.taunt = false
-    for (const f of side.minions) if (!this.isDead(f) && f.fx.onShieldLost) this.run(f.fx.onShieldLost, f, side, { other: m })
+    for (const f of this.watchers(side)) if (!this.isDead(f) && f.fx.onShieldLost) this.run(f.fx.onShieldLost, f, side, { other: m })
   }
 
   // ------------------------------------------------------------ combat flow
@@ -437,24 +645,43 @@ export class Combat {
     // Minions with Start of Combat effects, first attacker's side first, left to right.
     for (const idx of [first, 1 - first]) {
       const side = this.sides[idx]
-      // Effects that trigger from hand (e.g. Flighty Scout) go first.
-      for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
-      for (const m of [...side.minions]) {
-        if (this.isDead(m)) continue
-        if (m.fx.startOfCombat) this.run(m.fx.startOfCombat, m, side)
+      // Hero powers go first, then trinkets, then effects that trigger from hand (e.g. Flighty Scout).
+      this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
+      for (const id of side.trinkets) {
+        const t = side.standIns.find((x) => x.cardId === id)
+        if (t) this.run(compileTrinket(this.cards.get(id), this.cards, false).startOfCombat, t, side)
       }
+      for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
+      for (const m of [...side.minions]) this.minionStartOfCombat(m, side)
       this.resolveDeaths(side)
     }
-    // "Attack immediately" minions.
-    for (const idx of [first, 1 - first]) {
-      const side = this.sides[idx]
-      for (const m of [...side.minions]) {
-        if (m.attackImmediately && !this.isDead(m) && this.alive(this.other(side)).length) {
-          m.attackImmediately = false
-          this.singleAttack(side, m)
-        }
+    for (const idx of [first, 1 - first]) this.attackImmediately(this.sides[idx])
+  }
+
+  private minionStartOfCombat(m: Minion, side: Side) {
+    if (this.isDead(m)) return
+    this.run(m.fx.startOfCombat, m, side)
+    for (const e of m.grantedStartOfCombat ?? []) if (!this.isDead(m)) this.run(e, m, side)
+  }
+
+  /** "Attack immediately" minions (Start of Combat effects, Wingmen) take their attack now. */
+  private attackImmediately(side: Side) {
+    for (const m of [...side.minions]) {
+      if (m.attackImmediately && !this.isDead(m) && this.alive(this.other(side)).length) {
+        m.attackImmediately = false
+        this.singleAttack(side, m)
       }
     }
+  }
+
+  private heroPowerFx(cardId: string | undefined): HeroPowerFx {
+    if (!cardId) return { unsupported: [] }
+    let fx = this.heroPowerCache.get(cardId)
+    if (!fx) {
+      fx = compileHeroPower(this.cards.get(cardId), this.cards)
+      this.heroPowerCache.set(cardId, fx)
+    }
+    return fx
   }
 
   /** Swap in the teammate's warband for any side that has been wiped out. */
@@ -471,10 +698,20 @@ export class Combat {
       side.nameBonus = new Map()
       side.tribeBonus = new Map()
       side.pendingFromHand = []
-      // The incoming warband's Start of Combat effects fire as it enters.
+      side.bloodGem = { atk: 1, hp: 1 }
+      side.start = r.minions
+      side.summonBuffs = []
+      this.warbandAuras(side)
+      side.heroPower = r.heroPower
+      side.trinkets = [] // a reserve's trinkets aren't known
+      side.standIns = this.standInsFor(side)
+      // The incoming warband's Start of Combat effects fire as it enters: hero power first
+      // (seen live: Illidan's Wingmen buffed the reserve before anything else happened).
+      this.heroPowerFx(side.heroPower).startOfCombat?.(this, side)
       for (const m of [...side.hand]) if (m.fx.startOfCombatFromHand) this.run(m.fx.startOfCombatFromHand, m, side)
-      for (const m of [...side.minions]) if (!this.isDead(m) && m.fx.startOfCombat) this.run(m.fx.startOfCombat, m, side)
+      for (const m of [...side.minions]) this.minionStartOfCombat(m, side)
       this.resolveDeaths(side)
+      this.attackImmediately(side)
       swapped = true
     }
     return swapped
@@ -502,28 +739,44 @@ export class Combat {
     side.nextAttacker = now >= 0 ? now + 1 : idx
   }
 
-  chooseTarget(side: Side): Minion | undefined {
+  chooseTarget(side: Side, attacker?: Minion): Minion | undefined {
     const enemies = this.alive(side)
     const visible = enemies.filter((m) => !m.stealth)
     const pool = visible.length ? visible : enemies
+    // Zapp / Merciless Mammoth ignore Taunt; Worgen Vigilante picks something it can kill, if any.
+    if (attacker?.fx.targeting === 'lowestAtk') {
+      const low = Math.min(...pool.map((m) => m.atk))
+      return this.pick(pool.filter((m) => m.atk === low))
+    }
     const taunts = pool.filter((m) => m.taunt)
-    return this.pick(taunts.length ? taunts : pool)
+    const legal = taunts.length ? taunts : pool
+    if (attacker?.fx.targeting === 'canKill') {
+      const killable = legal.filter((m) => !m.divineShield && m.hp <= attacker.atk)
+      if (killable.length) return this.pick(killable)
+    }
+    return this.pick(legal)
   }
 
   /** One attack, including Rally and "whenever a friendly minion attacks" triggers. */
   singleAttack(side: Side, attacker: Minion, forcedTarget?: Minion) {
     const enemy = this.other(side)
-    const target = forcedTarget && !this.isDead(forcedTarget) ? forcedTarget : this.chooseTarget(enemy)
+    const target = forcedTarget && !this.isDead(forcedTarget) ? forcedTarget : this.chooseTarget(enemy, attacker)
     if (!target) return
     attacker.stealth = false
 
     this.run(attacker.fx.rally, attacker, side, { target })
-    for (const f of [...side.minions]) {
+    for (const r of attacker.grantedRallies ?? []) this.run(r, attacker, side, { target })
+    for (const f of this.watchers(side)) {
       if (this.isDead(f) || !f.fx.friendlyAttack) continue
       for (const t of f.fx.friendlyAttack) {
         if (t.excludeSelf && f === attacker) continue
         if (t.tribe && !hasTribe(attacker, t.tribe)) continue
-        if (t.rallyOnly && !attacker.fx.rally) continue
+        if (t.rallyOnly && !attacker.fx.rally && !attacker.grantedRallies?.length) continue
+        if (t.limit !== undefined) {
+          const used = f.uses?.get(t) ?? 0
+          if (used >= t.limit) continue
+          ;(f.uses ??= new Map()).set(t, used + 1)
+        }
         this.run(t.effects, f, side, { other: attacker, target })
       }
     }
@@ -550,7 +803,9 @@ export class Combat {
     const atk = attacker.atk
     const back = target.atk
     for (const h of hits) this.damage(h, atk, attacker)
-    if (!attacker.fx.immuneWhileAttacking) this.damage(attacker, back, target)
+    const immune = attacker.fx.immuneWhileAttacking || side.immuneAttacks > 0
+    if (side.immuneAttacks > 0) side.immuneAttacks--
+    if (!immune) this.damage(attacker, back, target)
     for (const h of hits) if (this.isDead(h)) this.onKilled(attacker, h, true)
     if (this.isDead(attacker)) this.onKilled(target, attacker, false)
 
@@ -561,6 +816,7 @@ export class Combat {
       if (pickAdj && excess > 0) this.damage(pickAdj, excess, attacker)
     }
     if (!this.isDead(attacker)) this.run(attacker.fx.afterAttack, attacker, side, { target })
+    for (const f of this.watchers(side)) if (!this.isDead(f) && f.fx.afterFriendlyAttack) this.run(f.fx.afterFriendlyAttack, f, side, { other: attacker, target })
     this.resolveDeaths(side)
   }
 
@@ -577,6 +833,16 @@ export class Combat {
       if (!batch.length) {
         // Board stable: room may have opened up for "summon from hand when you have space".
         for (const side of this.sides) if (side.pendingFromHand.length) this.fillFromHand(side)
+        for (const side of this.sides) while (side.pendingSpace.length && this.alive(side).length && this.alive(side).length < MAX_BOARD) side.pendingSpace.shift()!()
+        for (const side of this.sides) {
+          if (!side.standIns.some((f) => f.fx.whenSpace) && !side.minions.some((f) => f.fx.whenSpace)) continue
+          for (const f of [...side.standIns, ...side.minions]) {
+            if (!f.fx.whenSpace || f.uses?.has(f.fx) || this.isDead(f)) continue
+            if (!this.alive(side).length || this.alive(side).length >= MAX_BOARD) break
+            ;(f.uses ??= new Map()).set(f.fx, 1)
+            this.run(f.fx.whenSpace, f, side)
+          }
+        }
         return
       }
       // Remove all first (right to left so indexes stay valid), remembering positions.
@@ -594,10 +860,18 @@ export class Combat {
         d.pos -= before
       }
       for (const { m, side, pos } of batch) {
+        side.dead.push(m)
         // "After a friendly Beast dies", "After a friendly Deathrattle minion dies", ...
         this.fire(side, 'dies', m, { pos })
+        for (const sd of this.sides) if (this.watchers(sd).some((f) => f.fx.onAnyDeath)) for (const f of this.watchers(sd)) if (!this.isDead(f) && f.fx.onAnyDeath) this.run(f.fx.onAnyDeath, f, sd, { other: m })
+        // Free-Flying Feathermane: summons itself from hand.
+        if (side.hand.some((h) => h.fx.summonSelfFromHand)) for (const h of [...side.hand]) {
+          const want = h.fx.summonSelfFromHand
+          if (!want || (want.tribe && !hasTribe(m, want.tribe))) continue
+          if (this.summon(side, this.minionCopy(h), side.minions.length, true)) side.hand.splice(side.hand.indexOf(h), 1)
+        }
         // Avenge
-        for (const f of side.minions) {
+        for (const f of this.watchers(side)) {
           if (this.isDead(f) || !f.fx.avenge) continue
           f.avenge++
           if (f.avenge >= f.fx.avenge.n) {
@@ -606,9 +880,9 @@ export class Combat {
           }
         }
         // Deathrattles (Titus and friends add extra triggers)
-        if (m.fx.deathrattle) {
+        if (this.hasDeathrattle(m)) {
           const extra = side.minions.reduce((n, f) => n + (!this.isDead(f) ? f.fx.extraDeathrattles ?? 0 : 0), 0)
-          for (let k = 0; k <= extra; k++) this.run(m.fx.deathrattle, m, side, { pos })
+          for (let k = 0; k <= extra; k++) this.triggerDeathrattle(m, side, pos)
         }
         // Reborn
         if (m.reborn) {
@@ -616,8 +890,15 @@ export class Combat {
           const copy = this.makeMinion({ card, hp: 1 })
           copy.reborn = false
           copy.atk = card?.attack ?? m.baseAtk
-          if (this.summon(side, copy, pos)) {
-            for (const f of side.minions) if (f !== copy && !this.isDead(f) && f.fx.onFriendlyReborn) this.run(f.fx.onFriendlyReborn, f, side, { other: copy })
+          if (m.rebornFull === 'atk') copy.atk = m.atk
+          else if (m.rebornFull) {
+            copy.atk = m.atk
+            copy.hp = copy.maxHp = m.maxHp
+            copy.grantedDeathrattles = m.grantedDeathrattles
+            copy.grantedRallies = m.grantedRallies
+          }
+          if (this.summon(side, copy, pos, true)) {
+            for (const f of this.watchers(side)) if (f !== copy && !this.isDead(f) && f.fx.onFriendlyReborn) this.run(f.fx.onFriendlyReborn, f, side, { other: copy })
           }
         }
       }
@@ -638,13 +919,14 @@ export interface SimSummary {
   iterations: number
   ms: number
   unsupported: string[]
+  approximated: string[]
 }
 
 export function simulateMany(
   cards: CardSource,
   a: BoardInput,
   b: BoardInput,
-  opts: { iterations?: number; seed?: number; firstAttacker?: 0 | 1; skipStartOfCombat?: boolean; myHealth?: number; oppHealth?: number; timeBudgetMs?: number } = {},
+  opts: { iterations?: number; seed?: number; firstAttacker?: 0 | 1; skipStartOfCombat?: boolean; myHealth?: number; oppHealth?: number; timeBudgetMs?: number; damageCap?: number } = {},
 ): SimSummary {
   const iterations = opts.iterations ?? 5000
   const rng = mulberry32(opts.seed ?? (Math.random() * 2 ** 32) >>> 0)
@@ -662,21 +944,47 @@ export function simulateMany(
     if (opts.timeBudgetMs && n % 100 === 0 && Date.now() - t0 > opts.timeBudgetMs) break
     const c = new Combat(cards, rng, a, b, fxCache)
     const r = c.simulate({ firstAttacker: opts.firstAttacker, skipStartOfCombat: opts.skipStartOfCombat })
+    // The game caps the damage of one fight while its damage cap is on (see BgGame.damageCap).
+    const damage = opts.damageCap ? Math.min(r.damage, opts.damageCap) : r.damage
     if (r.winner === 0) {
       win++
-      dealt += r.damage
-      if (opts.oppHealth !== undefined && r.damage >= opts.oppHealth) lethalWin++
+      dealt += damage
+      if (opts.oppHealth !== undefined && damage >= opts.oppHealth) lethalWin++
     } else if (r.winner === 1) {
       loss++
-      taken += r.damage
-      if (opts.myHealth !== undefined && r.damage >= opts.myHealth) lethalLoss++
+      taken += damage
+      if (opts.myHealth !== undefined && damage >= opts.myHealth) lethalLoss++
     } else tie++
   }
   const unsupported = new Set<string>()
+  const approximated = new Set<string>()
   for (const board of [a, b])
     for (const m of [...board.minions, ...(board.reserve?.minions ?? [])]) {
       const fx = fxCache.get(m.cardId) ?? compileFx(cards.get(m.cardId), cards)
-      if (fx.unsupported.length) unsupported.add(cards.get(m.cardId)?.name ?? m.cardId)
+      const name = cards.get(m.cardId)?.name ?? m.cardId
+      // An enchantment only counts for what it adds in combat (see fromInput).
+      const ench = (m.enchantments ?? []).map((id) => fxCache.get(id) ?? compileFx(cards.get(id), cards))
+      if (fx.unsupported.length || ench.some((e) => e.unsupported.length)) unsupported.add(name)
+      else if (fx.approximated?.length || ench.some((e) => e.approximated?.length)) approximated.add(name)
+    }
+  // A reserve's hero power always acts. The first warbands' Start of Combat part has already happened
+  // when Start of Combat is skipped, but all-combat effects (passive) still act.
+  for (const board of [a, b]) {
+    for (const [id, all] of [[board.heroPower, !opts.skipStartOfCombat], [board.reserve?.heroPower, true]] as const) {
+      const card = id ? cards.get(id) : undefined
+      if (!card) continue
+      const fx = compileHeroPower(card, cards)
+      if (!all && !fx.passive) continue
+      if (fx.unsupported.length) unsupported.add(card.name)
+      else if (fx.approximated?.length || fx.passive?.approximated?.length) approximated.add(card.name)
+    }
+  }
+  for (const board of [a, b])
+    for (const id of board.trinkets ?? []) {
+      const card = cards.get(id)
+      const fx = compileTrinket(card, cards, !!opts.skipStartOfCombat)
+      if (fx.unsupported.length) unsupported.add(card?.name ?? id)
+      else if (fx.approximated?.length) approximated.add(card?.name ?? id)
     }
   return {
     win: win / n,
@@ -689,5 +997,6 @@ export function simulateMany(
     iterations: n,
     ms: Date.now() - t0,
     unsupported: [...unsupported],
+    approximated: [...approximated],
   }
 }

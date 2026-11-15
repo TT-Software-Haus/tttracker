@@ -117,3 +117,33 @@ What it took, all found with `--profile` (see development.md):
 - Overlay window settings are applied only when they change; re-applying them on every
   publish cost 5–75ms.
 - What's left before the hook: creating the windows (~300ms), harmless to the cursor.
+
+## Hero powers in the simulator
+
+- **Duos reserves need their hero power simulated.** Boards are captured at the first
+  attack, after Start of Combat, so the first warbands' hero powers have already acted.
+  A reserve warband is read from the copies Hearthstone makes *before* the fight, and
+  its hero power fires as it comes in. Found on a real tie the sim called a certain loss:
+  the teammate's Illidan (Wingmen, +2/+1 and attack immediately) made Dark Paradox a 9/9
+  that survived Crackling Cyclone. Order on entry, as logged: hero power, then the
+  warband's own Start of Combat, then attack-immediately.
+- Each Duos hero copy carries `HERO_POWER` (a dbfId), which is how the reserve's power
+  is found.
+- Hero powers are keyed by name, so skins share one handler. One whose text has
+  "Start of Combat" but no handler shows under "Not modelled".
+- **"(Twice per combat.)" limits are now enforced** on generic triggers. The engine
+  already counted them; the compiler parsed the limit away and never passed it on.
+- **Every combat-relevant card is modelled** (2026-11-14): all 2487 minions, every hero
+  power, trinket, quest reward and anomaly; 2 of 48 combat enchantments (numbers filled
+  in at runtime, or Deity) are left. Coverage used to look complete because it only
+  checked the pool; Timewarped cards and text without a combat keyword were never checked.
+- **Where the log can't say what a card needs, model a best guess and say so** (the
+  user's choice): the "Approximated" line under the odds. Examples: a Discovered Pirate,
+  an Undead Creation's parts, Blood Gem upgrades from earlier turns, Deadeye's target.
+- **Start of Combat effects are left out of trinkets** on the live path, because the
+  boards are captured after Start of Combat. What they do during the fight is simulated.
+- **Measured on the 74 fights in local logs:** "Not modelled" 9 fights to 0; the actual
+  result given under 5% went from 10 fights to 8. The 8 left have no unmodelled cards,
+  so they point at something other than card text.
+- Sims cost about 40µs per iteration on a busy board, up from 28µs: 5000 iterations in
+  about 200ms of the 400ms budget, on the worker thread.
