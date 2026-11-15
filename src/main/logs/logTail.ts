@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import { StringDecoder } from 'node:string_decoder'
 
 /**
  * Polls a growing text file and hands back complete new lines.
@@ -8,6 +9,8 @@ import { promises as fs } from 'node:fs'
 export class LogTail {
   private offset = 0
   private partial = ''
+  /** Holds back a UTF-8 character split across two reads, chunk or poll. */
+  private decoder = new StringDecoder('utf8')
   private timer?: NodeJS.Timeout
   private busy = false
 
@@ -22,6 +25,7 @@ export class LogTail {
   start(fromOffset = 0) {
     this.offset = fromOffset
     this.partial = ''
+    this.decoder = new StringDecoder('utf8')
     this.timer = setInterval(() => void this.poll(), this.intervalMs)
     void this.poll()
   }
@@ -41,6 +45,7 @@ export class LogTail {
         // File was truncated / recreated.
         this.offset = 0
         this.partial = ''
+        this.decoder = new StringDecoder('utf8')
       }
       if (stat.size === this.offset) return
       const fh = await fs.open(this.path, 'r')
@@ -54,7 +59,7 @@ export class LogTail {
           const { bytesRead } = await fh.read(buf, 0, len, this.offset)
           if (!bytesRead) break
           this.offset += bytesRead
-          const text = this.partial + buf.subarray(0, bytesRead).toString('utf8')
+          const text = this.partial + this.decoder.write(buf.subarray(0, bytesRead))
           const lines = text.split(/\r?\n/)
           this.partial = lines.pop() ?? ''
           const more = this.offset < stat.size
