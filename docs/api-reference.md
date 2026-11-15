@@ -155,6 +155,7 @@ type GameEvent =
 | constructor | `(game: Game, cards: CardDb, lookahead?: Game)` | Subscribes to both |
 | `simIterations` | `number` (5000) | Overridden from settings |
 | `onMatchEnd?` | `(m: BgMatch) => void` | |
+| `onMatchUpdated?` | `() => void` | A sim answered after its match was saved: save again, refresh History |
 | `onChange?` | `() => void` | Odds/results changed outside the normal line batch |
 | `get isBattlegrounds` | `boolean` | GameType, falling back to the dummy-player tag |
 | `get mode` | `GameMode` | |
@@ -344,6 +345,7 @@ Constants: `GAME_OVER_LINGER_MS = 30_000`, `STALL_MS = 3 * 60_000`,
 | `get matches` | `BgMatch[]` | Live reference |
 | `get settings` | `Settings` | Live reference, defaults merged one level deep |
 | `addMatch(m)` | `(BgMatch): void` | Push + debounced save |
+| `saveMatches()` | `(): void` | Debounced save after a saved match was filled in late |
 | `deleteMatch(id)` | `(string): void` | |
 | `get builds` | `Build[]` | Live reference |
 | `saveBuild(b)` | `(Build): void` | Insert or replace by id |

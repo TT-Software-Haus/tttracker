@@ -177,6 +177,10 @@ export class Tracker extends EventEmitter {
       this.store.addMatch({ ...m, tribes: this.screenTribes })
       this.emit('data')
     }
+    this.bg.onMatchUpdated = () => {
+      this.store.saveMatches()
+      this.emit('data')
+    }
     this.game.on((e) => {
       if (e.type === 'gameStart') {
         this.overSince = undefined

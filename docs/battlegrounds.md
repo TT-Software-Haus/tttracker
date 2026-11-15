@@ -130,7 +130,9 @@ Exceptions are caught and logged; the round simply gets no `odds`.
 `placement`.
 
 `emitMatch()` builds a `BgMatch` (uuid, timestamps, hero, placement, rounds, tribes,
-final board, teammate hero, every combat) and hands it to `onMatchEnd`.
+final board, teammate hero, every combat) and hands it to `onMatchEnd`. The match shares its round objects with the game, so a
+combat sim answering after that still fills in its odds; `onMatchUpdated` then asks
+Tracker to save matches again and refresh History.
 
 ## `Tracker`
 
