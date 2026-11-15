@@ -62,6 +62,25 @@ describe('highlight boxes over the tavern', () => {
     expect(tracker.highlights).toEqual([])
   })
 
+  it('still boxes a second copy when the build wants two and you have one', async () => {
+    const two: Build = { ...build, targets: [{ byTurn: 8, cardIds: ['BRANN', 'BRANN'] }] }
+    screen.slots = [slot(100), slot(200), slot(300)]
+    const snap = { ...base([minion('A', 1), minion('BRANN', 3)]), board: [minion('BRANN', 0)] }
+    tracker.refreshHighlights(snap, two)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
+  })
+
+  it("doesn't box a minion you own as a golden whose id doesn't end in _G", async () => {
+    // BG19_010_Gt is golden BG19_010t; the card data says so, the suffix doesn't.
+    const token: Build = { ...build, targets: [{ byTurn: 8, cardIds: ['BG19_010t'] }] }
+    screen.slots = [slot(100), slot(200)]
+    const golden = { ...minion('BG19_010_Gt', 0), golden: true, normalId: 'BG19_010t' }
+    tracker.refreshHighlights({ ...base([minion('A', 1), minion('BG19_010t', 2)]), board: [golden] }, token)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights).toEqual([])
+  })
+
   it('follows the card when the tavern shifts without the log changing', async () => {
     screen.slots = [slot(100), slot(200), slot(300)]
     tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)

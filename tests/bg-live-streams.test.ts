@@ -41,6 +41,15 @@ describe('live replay (PowerTaskList + GameState lookahead)', () => {
     expect(r.myReserve?.length).toBeGreaterThan(0)
   })
 
+  it("carries a golden's normal card from the card data, for build matching", () => {
+    const s = bg.snapshot()
+    const all = [...s.rounds.flatMap((r) => [...r.myBoard, ...r.oppBoard]), ...s.board, ...s.hand, ...s.shop]
+    const goldens = all.filter((m) => db.get(m.cardId)?.normalId)
+    expect(goldens.length).toBeGreaterThan(0)
+    for (const m of goldens) expect(m.normalId).toBe(db.get(m.cardId)!.normalId)
+    expect(all.filter((m) => !db.get(m.cardId)?.normalId).every((m) => m.normalId === undefined)).toBe(true)
+  })
+
   it('never shows a result before the odds (no spoilers) and predicts the loss', () => {
     const first = shown[0]
     expect(first.split(':')[1]).toBe('-') // odds first, result later

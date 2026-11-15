@@ -440,6 +440,7 @@ export class BgGame {
       health: Number(t.HEALTH ?? 0) - Number(t.DAMAGE ?? 0),
       tier: Number(t.TECH_LEVEL ?? card?.techLevel ?? 1),
       golden: on(e, 'PREMIUM') || !!card?.normalId,
+      ...(card?.normalId && { normalId: card.normalId }),
       taunt: on(e, 'TAUNT'),
       divineShield: on(e, 'DIVINE_SHIELD'),
       reborn: on(e, 'REBORN'),
