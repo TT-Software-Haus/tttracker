@@ -58,8 +58,11 @@ Notes:
 - `comps:detail` only accepts `https://hsreplay.net/battlegrounds/comps/…` URLs, since
   the renderer supplies the address.
 - `builds:export` / `builds:import` go through `buildCode.ts` in main because codes
-  address cards by `CardDb.shareIndexOf` / `shareCardAt`. Import throws on a bad
-  checksum rather than returning the wrong minions.
+  address cards by `CardDb.shareIndexOf` / `shareCardAt`. A code ends in two
+  checksums, over the positions (a damaged code) and over the card ids (a card list
+  that shifted, so positions resolve to other cards); import throws on either rather
+  than returning the wrong minions. The id check is skipped when some cards aren't in
+  our data, which then import as `missing`.
 
 ## Shared types — `src/shared/types.ts`
 

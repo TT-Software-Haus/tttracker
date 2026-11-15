@@ -32,8 +32,8 @@ describe('sharing a build as a code', () => {
 
   it('keeps the build shape visible', () => {
     const code = encodeBuild(build, codec)
-    // Turn markers, addon marker and checksum are all legible.
-    expect(code).toMatch(/^HTB Scam murlocs \[m\]\|4:\S+ c:\S+ \+\S+#[0-9a-z]{2}$/)
+    // Turn markers, addon marker and checksums (positions, then ids) are all legible.
+    expect(code).toMatch(/^HTB Scam murlocs \[m\]\|4:\S+ c:\S+ \+\S+#[0-9a-z]{4}$/)
   })
 
   it('round trips everything except the local id', () => {
@@ -61,13 +61,22 @@ describe('sharing a build as a code', () => {
   })
 
   it('refuses a code whose cards would resolve differently', () => {
-    // Exactly what a shifted card list looks like: same positions, other cards.
-    const shifted: Codec = { indexOf: codec.indexOf, cardAt: (i) => LIST[i + 1] }
-    expect(() => decodeBuild(encodeBuild(build, codec), shifted)).not.toThrow()
-    // The checksum is over indices, so catch the real hazard: a tampered code.
+    // Exactly what a shifted card list looks like: a card inserted mid-list, so
+    // every position still resolves, but from there on to other cards.
+    const shifted: Codec = { indexOf: codec.indexOf, cardAt: (i) => (i < 8 ? LIST[i] : i === 8 ? 'BG_new' : LIST[i - 1]) }
+    expect(() => decodeBuild(encodeBuild(build, codec), shifted)).toThrow(/doesn't match your card data/)
+    // And a tampered code, which resolves one position to another card.
     const code = encodeBuild(build, codec)
     const broken = code.replace(/\|4:(.)/, (_m, c) => `|4:${c === '7' ? '8' : '7'}`)
     expect(() => decodeBuild(broken, codec)).toThrow(/doesn't match your card data/)
+  })
+
+  it('still imports a code from before the card-id check', () => {
+    const old = encodeBuild(build, codec).slice(0, -2) // position checksum only
+    expect(decodeBuild(old, codec).build.targets).toEqual([
+      { byTurn: 4, cardIds: ['BG_7', 'BG_9', 'BG_15'] },
+      { byTurn: 12, cardIds: ['BG_600', 'BG_1299'] },
+    ])
   })
 
   it('carries an HSReplay comp back as a link, without spending a URL on it', () => {
