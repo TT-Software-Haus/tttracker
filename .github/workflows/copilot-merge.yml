@@ -102,6 +102,7 @@ jobs:
             [ "$bot" -gt 0 ] || gh pr review "$pr" --approve --body "Copilot reviewed this and raised nothing."
             status success "Copilot raised nothing"
 
-            # A failed merge (conflict, mergeability not computed yet) is retried next run.
-            gh pr merge "$pr" --merge --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
+            # Squashed: one commit on develop per PR. A failed merge (conflict,
+            # mergeability not computed yet) is retried next run.
+            gh pr merge "$pr" --squash --match-head-commit "$SHA" || echo "#$pr: merge failed, will retry"
           done

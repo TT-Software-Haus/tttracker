@@ -94,5 +94,11 @@ jobs:
           promote success "Version bumped: $current -> $version"
           gh pr review "$PR" --approve --body "Version bumped: $current -> $version."
           # Only the commit whose version was checked above; a newer head gets its own run.
+          # A merge commit, not a squash: develop and master are both long-lived,
+          # and a squash would leave master with commits develop never has, so
+          # every later promotion would conflict.
           gh pr merge "$PR" --merge --match-head-commit "$sha"
+          # Tag the merge with its version. Fails if the tag exists, like the release.
+          merged=$(gh pr view "$PR" --json mergeCommit --jq .mergeCommit.oid)
+          gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/v$version" -f sha="$merged" > /dev/null
           gh workflow run release.yml --ref master
