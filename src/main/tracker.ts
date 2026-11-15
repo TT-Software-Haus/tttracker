@@ -521,6 +521,14 @@ export class Tracker extends EventEmitter {
     try {
       if (!targets.length) return
       const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
+      // No game window (minimised): drop the boxes rather than keep them, so
+      // restoring it has to find and confirm them afresh, and that publish is
+      // what brings the hidden highlight layer back.
+      if (!win && this.highlights.length) {
+        this.highlights = []
+        this.highlightPending = ''
+        this.publish()
+      }
       // A failed read leaves no boxes, and the next pass tries again.
       if (!geo || !win || key !== this.highlightKey) return
       // Duos, looking at your teammate's board: your boxes would land on their

@@ -169,6 +169,9 @@ function followGameWindow() {
     // Without this the boxes stayed where the window used to be (seen live):
     // the highlight layer was only moved when the log changed.
     if (boxes && g) fitHighlightWindow(g)
+    // Minimised: the boxes would sit on the desktop. The tracker drops them on
+    // its next read too, and its next boxes show the layer again.
+    if (boxes && !g) highlightWin!.hide()
     const a = g ? { x: g.x, y: g.y, width: g.width, height: g.height } : screen.getPrimaryDisplay().workArea
     if (sameRect(a, anchor, 0)) return
     anchor = a
@@ -220,7 +223,10 @@ async function updateHighlightWindow(snap: BgSnapshot) {
     return
   }
   const rect = await getGameWindowRect()
-  if (!rect) return
+  if (!rect) {
+    if (win.isVisible()) win.hide() // minimised: not on the desktop
+    return
+  }
   fitHighlightWindow(rect)
   if (!win.isVisible()) win.showInactive()
 }

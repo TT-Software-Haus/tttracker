@@ -40,6 +40,7 @@ describe('highlight boxes over the tavern', () => {
     tracker = new Tracker(new Store(root), join(root, 'carddata'))
     screen.moves = 0
     screen.teammateView = false // a failed test must not leave the next one on the teammate's board
+    game.rect = { x: 0, y: 0, width: 1000, height: 500, captured: { x: 0, y: 0, width: 1000, height: 500 } } // nor minimised
     tracker.publish = () => screen.moves++
     // The log's tavern size, spells included. Defaults to what the screen shows.
     logSize = undefined
@@ -79,6 +80,23 @@ describe('highlight boxes over the tavern', () => {
     tracker.refreshHighlights({ ...base([minion('A', 1), minion('BG19_010t', 2)]), board: [golden] }, token)
     await vi.advanceTimersByTimeAsync(2000)
     expect(tracker.highlights).toEqual([])
+  })
+
+  it('drops the boxes while the game is minimised, and finds them again after', async () => {
+    // Seen by review: the layer stayed on the desktop, and nothing re-showed it.
+    screen.slots = [slot(100), slot(200), slot(300)]
+    tracker.refreshHighlights(base([minion('A', 1), minion('BRANN', 3)]), build)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(tracker.highlights).toHaveLength(1)
+    const rect = game.rect
+    game.rect = undefined as never // IsIconic: no window to draw over
+    const published = screen.moves
+    await vi.advanceTimersByTimeAsync(500)
+    expect(tracker.highlights).toEqual([])
+    expect(screen.moves).toBeGreaterThan(published) // the publish that hides the layer
+    game.rect = rect
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(tracker.highlights.map((b: { x: number }) => b.x)).toEqual([300])
   })
 
   it('follows the card when the tavern shifts without the log changing', async () => {
