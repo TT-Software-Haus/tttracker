@@ -22,8 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          # What the lock file is made with. lts/* moved to Node 26, whose npm
-          # rejected this lock file (optional wasm deps it expects listed).
+          # The dev machine's major. npm still drifts within it (the runner's
+          # 11.19 is stricter about optional deps than 11.6), so the lock file
+          # is kept complete for the newer npm.
           node-version: 24
           cache: npm
       - run: npm ci

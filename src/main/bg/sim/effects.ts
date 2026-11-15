@@ -451,13 +451,6 @@ function parseBody(body: string, cards: CardSource, self: CardInfo | undefined, 
 
 const HEADER_RE = /((?:Battlecry, |Battlecry and )?(?:Deathrattle, and Rally|Deathrattle|Start of Combat|Rally)|Battlecry|Avenge \((\d+)\)|Activate \(\d+\)|Spellcraft)\s*:|(Choose One) -/g
 
-/** "(Twice per combat.)" style limits, anywhere in the card text. */
-function perCombatLimit(text: string): number | undefined {
-  const m = /\((once|twice|(\d+) times) per combat\.?\)/i.exec(text)
-  if (!m) return undefined
-  return m[1].toLowerCase() === 'once' ? 1 : m[1].toLowerCase() === 'twice' ? 2 : Number(m[2])
-}
-
 /** Subject phrases for friendly triggers: "a friendly Beast", "another friendly Taunt minion", "a friendly Deathrattle minion"... */
 function parseSubject(phrase: string): Pick<Trigger, 'tribe' | 'needTaunt' | 'needDeathrattle' | 'excludeSelf'> | undefined {
   const m = /^(a|another|a different) friendly (taunt minion|deathrattle minion|minion with taunt|minion|\w+)$/i.exec(phrase.trim())
