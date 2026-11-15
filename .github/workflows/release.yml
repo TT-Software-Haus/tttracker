@@ -22,7 +22,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          # What the lock file is made with. lts/* moved to Node 26, whose npm
+          # rejected this lock file (optional wasm deps it expects listed).
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run typecheck
