@@ -67,10 +67,24 @@ function unpackNums(s: string): number[] {
   return out
 }
 
-/** Cheap, order-sensitive, and only two characters on the wire. */
-function checksum(ids: number[]): string {
+/**
+ * Cheap, order-sensitive, and only two characters on the wire each. A code
+ * carries two: over the positions, which catches a damaged code, and over the
+ * card ids, which catches a card list that has shifted under it (the same
+ * positions resolving to other cards).
+ */
+function checksum(indices: number[]): string {
   let h = 7
-  for (const n of ids) h = (h * 31 + n) % 1296
+  for (const n of indices) h = (h * 31 + n) % 1296
+  return h.toString(36).padStart(2, '0')
+}
+
+function idChecksum(cardIds: string[]): string {
+  let h = 7
+  for (const id of cardIds) {
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 1296
+    h = (h * 31) % 1296 // between ids, so "AB","C" and "A","BC" differ
+  }
   return h.toString(36).padStart(2, '0')
 }
 
@@ -82,14 +96,16 @@ export interface Codec {
 
 export function encodeBuild(build: Build, codec: Codec): string {
   const seen: number[] = []
+  const seenIds: string[] = []
   const pack = (ids: string[]) =>
     ids
-      .map(codec.indexOf)
-      .filter((i): i is number => i !== undefined)
-      .map((i) => {
-        seen.push(i)
-        return packNum(i)
+      .map((id) => {
+        const i = codec.indexOf(id)
+        if (i !== undefined) seen.push(i), seenIds.push(id)
+        return i
       })
+      .filter((i): i is number => i !== undefined)
+      .map(packNum)
       .join('')
 
   const tribe = codeForTribe(build.tribe)
@@ -101,7 +117,7 @@ export function encodeBuild(build: Build, codec: Codec): string {
   // HSReplay comps are reconstructed from the id alone rather than a whole URL.
   const comp = build.source?.url.match(/\/comps\/(\d+)\//)
   if (comp) parts.push(`@${comp[1]}`)
-  return `HTB ${build.name}${tribe ? ` [${tribe}]` : ''}|${parts.join(' ')}#${checksum(seen)}`
+  return `HTB ${build.name}${tribe ? ` [${tribe}]` : ''}|${parts.join(' ')}#${checksum(seen)}${idChecksum(seenIds)}`
 }
 
 export interface Decoded {
@@ -131,13 +147,15 @@ export function decodeBuild(code: string, codec: Codec): Decoded {
   }
 
   const seen: number[] = []
+  const seenIds: string[] = []
   let missing = 0
   const cards = (packed: string) =>
     unpackNums(packed)
       .map((i) => {
         seen.push(i)
         const id = codec.cardAt(i)
-        if (!id) missing++
+        if (id) seenIds.push(id)
+        else missing++
         return id
       })
       .filter((id): id is string => !!id)
@@ -160,9 +178,17 @@ export function decodeBuild(code: string, codec: Codec): Decoded {
   }
   if (!targets.length && !addons.length) throw new Error('That build code has no minions in it')
 
-  // The index list shifting under us would otherwise produce a plausible build
-  // made of the wrong cards, which is far worse than refusing to import.
-  if (stated && stated !== checksum(seen)) {
+  // A damaged code, or the index list shifting under us, would otherwise produce
+  // a plausible build made of the wrong cards, which is far worse than refusing
+  // to import. The positions are always checked. The ids are checked when every
+  // card resolved: with some missing (a code from a newer card list) the import
+  // goes ahead with what it has, reporting `missing`. Codes from before the id
+  // check carry the position checksum alone.
+  // ponytail: a shift *and* missing cards together slips through; new cards sort
+  // to the end (dbfId), so a shift needs a mid-list change on top. Checking that
+  // case needs a per-card check on the wire, i.e. longer codes.
+  const [byPos, byId] = [stated?.slice(0, 2), stated?.slice(2)]
+  if (stated && (byPos !== checksum(seen) || (byId && !missing && byId !== idChecksum(seenIds)))) {
     throw new Error("That build code doesn't match your card data — it may be from a newer version of the tracker")
   }
 

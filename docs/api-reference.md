@@ -155,6 +155,7 @@ type GameEvent =
 | constructor | `(game: Game, cards: CardDb, lookahead?: Game)` | Subscribes to both |
 | `simIterations` | `number` (5000) | Overridden from settings |
 | `onMatchEnd?` | `(m: BgMatch) => void` | |
+| `onMatchUpdated?` | `() => void` | A sim answered after its match was saved: save again, refresh History |
 | `onChange?` | `() => void` | Odds/results changed outside the normal line batch |
 | `get isBattlegrounds` | `boolean` | GameType, falling back to the dummy-player tag |
 | `get mode` | `GameMode` | |
@@ -344,6 +345,7 @@ Constants: `GAME_OVER_LINGER_MS = 30_000`, `STALL_MS = 3 * 60_000`,
 | `get matches` | `BgMatch[]` | Live reference |
 | `get settings` | `Settings` | Live reference, defaults merged one level deep |
 | `addMatch(m)` | `(BgMatch): void` | Push + debounced save |
+| `saveMatches()` | `(): void` | Debounced save after a saved match was filled in late |
 | `deleteMatch(id)` | `(string): void` | |
 | `get builds` | `Build[]` | Live reference |
 | `saveBuild(b)` | `(Build): void` | Insert or replace by id |
@@ -387,7 +389,7 @@ an unsubscribe function.
 | `buildsByLobby(builds, tribes)` | `→ readonly [relevant, rest]` | Builds for this lobby's tribes (or tribeless) first; used by `BuildBar` and `BuildPicker` |
 | `parseCardLinks(text)` | `(string): { text, dbfId? }[]` | Splits HSReplay's `[[Name\|\|dbfId]]` card links out of a description |
 | `sortedTargets(b)` | `(Build): BuildTarget[]` | Earliest `byTurn` first, copied |
-| `buildProgress(build, round, board, shop?)` | `→ { stage, minions, addons, have, turnsLeft, final } \| undefined` | Current stage = first not yet past its turn, else the last; goldens count |
+| `buildProgress(build, round, board, shop?)` | `→ { stage, minions, addons, have, turnsLeft, final } \| undefined` | Current stage = first not yet past its turn, else the last; goldens count (by `normalId`), and each owned copy fills one slot, so a stage wanting a minion twice needs two |
 | `cardTextParts(raw)` / `cardTextPlain(raw)` | `(string \| undefined): TextPart[]` / `string` | Card text with Hearthstone's bold/italic emphasis kept as parts / stripped |
 | `Session` | `{ games: BgMatch[]; avg: number; topRate: number }` | games oldest-first |
 | `currentSession(matches)` | `(BgMatch[]): Session` | Cuts at the first >2 h gap (`SESSION_GAP_MS`) |

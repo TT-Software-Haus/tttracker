@@ -41,6 +41,15 @@ describe('live replay (PowerTaskList + GameState lookahead)', () => {
     expect(r.myReserve?.length).toBeGreaterThan(0)
   })
 
+  it("carries a golden's normal card from the card data, for build matching", () => {
+    const s = bg.snapshot()
+    const all = [...s.rounds.flatMap((r) => [...r.myBoard, ...r.oppBoard]), ...s.board, ...s.hand, ...s.shop]
+    const goldens = all.filter((m) => db.get(m.cardId)?.normalId)
+    expect(goldens.length).toBeGreaterThan(0)
+    for (const m of goldens) expect(m.normalId).toBe(db.get(m.cardId)!.normalId)
+    expect(all.filter((m) => !db.get(m.cardId)?.normalId).every((m) => m.normalId === undefined)).toBe(true)
+  })
+
   it('never shows a result before the odds (no spoilers) and predicts the loss', () => {
     const first = shown[0]
     expect(first.split(':')[1]).toBe('-') // odds first, result later
@@ -53,5 +62,36 @@ describe('live replay (PowerTaskList + GameState lookahead)', () => {
     expect(saved).toHaveLength(1)
     expect(saved[0].mode).toBe('duos')
     expect(saved[0].placement).toBeGreaterThan(0)
+  })
+})
+
+describe('combat sims that answer after the game is saved', () => {
+  it('fills in the saved match and asks for it to be saved again', async () => {
+    const db = new CardDb()
+    db.load(JSON.parse(readFileSync(join(fixtures, 'cards-both-streams.json'), 'utf8')))
+    const game = new Game('PowerTaskList')
+    const lookahead = new Game('GameState')
+    const bg = new BgGame(game, db, lookahead)
+    // A worker that hasn't answered anything yet.
+    const answers: (() => void)[] = []
+    const odds = { win: 0.5, tie: 0, loss: 0.5, avgDamageTaken: 1, avgDamageDealt: 1, iterations: 1 }
+    bg.simulate = () => new Promise((resolve) => answers.push(() => resolve(odds as never)))
+    const saved: BgMatch[] = []
+    let updates = 0
+    bg.onMatchEnd = (m) => saved.push(m)
+    bg.onMatchUpdated = () => updates++
+    for (const l of gunzipSync(readFileSync(join(fixtures, 'bg-duos-both-streams.log.gz'))).toString().split('\n')) {
+      lookahead.handleLine(l)
+      game.handleLine(l)
+    }
+    bg.flushPendingMatch()
+    expect(saved).toHaveLength(1)
+    expect(answers.length).toBeGreaterThan(0)
+    expect(updates).toBe(0)
+
+    for (const answer of answers) answer()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(updates).toBeGreaterThan(0)
+    expect(saved[0].combats.some((r) => r.odds?.win === 0.5)).toBe(true)
   })
 })

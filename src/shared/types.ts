@@ -36,6 +36,12 @@ export interface BoardMinion {
   health: number
   tier: number
   golden: boolean
+  /**
+   * A golden copy's normal card, from the card data. Golden ids don't always
+   * end in `_G` (`BG19_010_Gt` is golden `BG19_010t`), so this is the one to
+   * match on.
+   */
+  normalId?: string
   taunt?: boolean
   divineShield?: boolean
   reborn?: boolean

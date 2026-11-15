@@ -64,4 +64,25 @@ describe('reading Power.log a chunk at a time', () => {
     expect(more.slice(0, -1).every(Boolean)).toBe(true)
     expect(more.at(-1)).toBe(false)
   })
+
+  it('keeps a UTF-8 character whole across a chunk edge and across polls', async () => {
+    // "é" is two bytes; put its first byte last in the first megabyte.
+    const name = 'D 20:00:00.0 PlayerName=Zoé'
+    const head = filler(MB - name.length - 1) + '\n'
+    const first = head + name + '\n'
+    expect(Buffer.byteLength(head + 'D 20:00:00.0 PlayerName=Zo')).toBe(MB - 1)
+    const p = await write(first)
+    const got: string[] = []
+    const tail = new LogTail(p, (l) => got.push(...l), 20)
+    tail.start(0)
+    while (!got.includes(name)) await new Promise((r) => setTimeout(r, 20))
+    // A write that stops mid-character, finished on a later poll.
+    const tail2 = Buffer.from('Renée\n')
+    await fs.appendFile(p, tail2.subarray(0, 4)) // "Ren" + first byte of "é"
+    await new Promise((r) => setTimeout(r, 100))
+    await fs.appendFile(p, tail2.subarray(4))
+    while (!got.includes('Renée')) await new Promise((r) => setTimeout(r, 20))
+    tail.stop()
+    expect(got.filter((l) => l.includes('�'))).toEqual([])
+  })
 })

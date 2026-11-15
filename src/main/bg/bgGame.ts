@@ -59,6 +59,14 @@ export class BgGame {
    * the lobby, or even in the season.
    */
   onMatchEnd?: (m: Omit<BgMatch, 'tribes'>) => void
+  /**
+   * A sim answered after its match was handed to onMatchEnd. The match holds
+   * the same round objects, so its odds are already filled in; this is the cue
+   * to save it again and refresh History.
+   */
+  onMatchUpdated?: () => void
+  /** Rounds already handed over in a finished match. */
+  private emittedRounds = new WeakSet<CombatRound>()
   /** Called whenever odds/results change (outside of the normal line batch). */
   onChange?: () => void
 
@@ -440,6 +448,7 @@ export class BgGame {
       health: Number(t.HEALTH ?? 0) - Number(t.DAMAGE ?? 0),
       tier: Number(t.TECH_LEVEL ?? card?.techLevel ?? 1),
       golden: on(e, 'PREMIUM') || !!card?.normalId,
+      ...(card?.normalId && { normalId: card.normalId }),
       taunt: on(e, 'TAUNT'),
       divineShield: on(e, 'DIVINE_SHIELD'),
       reborn: on(e, 'REBORN'),
@@ -544,6 +553,7 @@ export class BgGame {
         if (this.simFor.get(round) !== seq) return // a resim replaced it
         round.odds = partial ? { ...odds, partial: true } : odds
         this.onChange?.()
+        if (this.emittedRounds.has(round)) this.onMatchUpdated?.()
       },
       (err) => console.error('Simulation failed', err),
     )
@@ -678,6 +688,7 @@ export class BgGame {
     const player = this.game.playerEntity(this.game.friendlyPlayerId)
     const mate = this.lobbyHero(Number(player?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0) || undefined)
     const lastMine = [...this.rounds].reverse().find((r) => r.myBoard.length)
+    for (const r of this.rounds) this.emittedRounds.add(r)
     this.onMatchEnd({
       id: randomUUID(),
       startedAt: this.game.startedAt,

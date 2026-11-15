@@ -177,6 +177,10 @@ export class Tracker extends EventEmitter {
       this.store.addMatch({ ...m, tribes: this.screenTribes })
       this.emit('data')
     }
+    this.bg.onMatchUpdated = () => {
+      this.store.saveMatches()
+      this.emit('data')
+    }
     this.game.on((e) => {
       if (e.type === 'gameStart') {
         this.overSince = undefined
@@ -476,14 +480,20 @@ export class Tracker extends EventEmitter {
    * card while the next read is pending.
    */
   private refreshHighlights(base: Omit<BgSnapshot, 'status' | 'statusDetail' | 'shopHighlights' | 'tribes'>, build: Build | undefined) {
-    const wanted = new Set<string>()
-    if (build) {
-      for (const t of build.targets) for (const id of t.cardIds) wanted.add(id.replace(/_G$/, ''))
-      for (const id of build.addons ?? []) wanted.add(id.replace(/_G$/, ''))
+    // Counted, not sets: a stage can want two copies of a minion, so the second
+    // stays worth boxing after you've bought the first. Wanted is the most
+    // copies any one stage (or the addons) asks for.
+    const baseId = (m: BoardMinion) => m.normalId ?? m.cardId.replace(/_G$/, '')
+    const wanted = new Map<string, number>()
+    for (const ids of build ? [...build.targets.map((t) => t.cardIds), build.addons ?? []] : []) {
+      const n = new Map<string, number>()
+      for (const id of ids) n.set(id.replace(/_G$/, ''), (n.get(id.replace(/_G$/, '')) ?? 0) + 1)
+      for (const [id, k] of n) wanted.set(id, Math.max(k, wanted.get(id) ?? 0))
     }
     // In hand counts: it's bought, just not played yet.
-    const owned = new Set([...base.board, ...base.hand].map((m) => m.cardId.replace(/_G$/, '')))
-    const wants = (m: BoardMinion) => wanted.has(m.cardId.replace(/_G$/, '')) && !owned.has(m.cardId.replace(/_G$/, ''))
+    const owned = new Map<string, number>()
+    for (const m of [...base.board, ...base.hand]) owned.set(baseId(m), (owned.get(baseId(m)) ?? 0) + 1)
+    const wants = (m: BoardMinion) => (wanted.get(baseId(m)) ?? 0) > (owned.get(baseId(m)) ?? 0)
     // The debug setting boxes every minion on offer, so the placement can be
     // checked without waiting for a build's minion to turn up.
     const debug = this.store.settings.overlay.debugHighlights
@@ -511,6 +521,14 @@ export class Tracker extends EventEmitter {
     try {
       if (!targets.length) return
       const [geo, win] = await Promise.all([readShopSlots(), getGameWindowRect()])
+      // No game window (minimised): drop the boxes rather than keep them, so
+      // restoring it has to find and confirm them afresh, and that publish is
+      // what brings the hidden highlight layer back.
+      if (!win && this.highlights.length) {
+        this.highlights = []
+        this.highlightPending = ''
+        this.publish()
+      }
       // A failed read leaves no boxes, and the next pass tries again.
       if (!geo || !win || key !== this.highlightKey) return
       // Duos, looking at your teammate's board: your boxes would land on their

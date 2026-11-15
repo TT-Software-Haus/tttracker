@@ -13,9 +13,12 @@ parentPort!.on('message', ({ id, a, b, opts }: SimJob & { id: number }) => {
   try {
     // Loaded on the first job, from the cache main has written by then (it
     // loads the cards before it reads the log). No download here.
+    // Kept only once it has loaded, so a failed read is retried by the next
+    // job instead of leaving every later sim on an empty database.
     if (!cards) {
-      cards = new CardDb()
-      cards.load(JSON.parse(readFileSync(join(workerData.cacheDir, CACHE_FILE), 'utf8')))
+      const db = new CardDb()
+      db.load(JSON.parse(readFileSync(join(workerData.cacheDir, CACHE_FILE), 'utf8')))
+      cards = db
     }
     parentPort!.postMessage({ id, odds: simulateMany(cards, a, b, opts) })
   } catch (err) {

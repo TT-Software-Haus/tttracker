@@ -80,6 +80,11 @@ export class Store {
     this.matchesFile.save()
   }
 
+  /** A saved match was filled in after the fact (a combat sim answering late). */
+  saveMatches() {
+    this.matchesFile.save()
+  }
+
   deleteMatch(id: string) {
     this.matchesFile.value = this.matches.filter((m) => m.id !== id)
     this.matchesFile.save()

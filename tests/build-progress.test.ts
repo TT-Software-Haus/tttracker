@@ -76,6 +76,24 @@ describe('tracking progress against a build', () => {
     expect(buildProgress(build, 7, [minion('BG_C_G')])?.have).toBe(1)
   })
 
+  it("counts a golden whose id doesn't end in _G, by the card data's normal id", () => {
+    // BG19_010_Gt is golden BG19_010t; stripping "_G" leaves it unmatched.
+    const token: Build = { ...build, targets: [{ byTurn: 8, cardIds: ['BG19_010t'] }] }
+    const golden = { ...minion('BG19_010_Gt'), golden: true, normalId: 'BG19_010t' }
+    expect(buildProgress(token, 7, [golden])?.have).toBe(1)
+  })
+
+  it('needs one owned copy per slot when a stage wants a minion twice', () => {
+    const two: Build = { ...build, targets: [{ byTurn: 8, cardIds: ['BG_C', 'BG_C', 'BG_D'] }] }
+    const p = buildProgress(two, 7, [minion('BG_C')], [minion('BG_C')])
+    expect(p?.have).toBe(1)
+    expect(p?.minions).toEqual([
+      { cardId: 'BG_C', have: true, inShop: false },
+      { cardId: 'BG_C', have: false, inShop: true }, // the second copy is still worth buying
+      { cardId: 'BG_D', have: false, inShop: false },
+    ])
+  })
+
   it('handles a build with no stages at all', () => {
     expect(buildProgress({ ...build, targets: [] }, 3, [])).toBeUndefined()
   })

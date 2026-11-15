@@ -144,19 +144,19 @@ export function buildProgress(build: Build, round: number, board: BoardMinion[],
   const stages = sortedTargets(build)
   const stage = stages.find((t) => t.byTurn >= round) ?? stages.at(-1)
   if (!stage) return undefined
-  const owned = new Set(board.map((m) => baseCardId(m.cardId)))
-  const offered = new Set(shop.map((m) => baseCardId(m.cardId)))
-  const minions = stage.cardIds.map((cardId) => ({
-    cardId,
-    have: owned.has(baseCardId(cardId)),
+  // Counted, not a set: a stage can want two copies of a minion, and each copy
+  // you own fills one of them.
+  const owned = countIds(board.map(minionBaseId))
+  const offered = new Set(shop.map(minionBaseId))
+  const slot = (cardId: string) => {
+    const id = baseCardId(cardId)
+    const have = (owned.get(id) ?? 0) > 0
+    if (have) owned.set(id, owned.get(id)! - 1)
     // Worth shouting about: it's in the tavern now and you haven't got it.
-    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
-  }))
-  const addons = (build.addons ?? []).map((cardId) => ({
-    cardId,
-    have: owned.has(baseCardId(cardId)),
-    inShop: !owned.has(baseCardId(cardId)) && offered.has(baseCardId(cardId)),
-  }))
+    return { cardId, have, inShop: !have && offered.has(id) }
+  }
+  const minions = stage.cardIds.map(slot)
+  const addons = (build.addons ?? []).map(slot)
   return {
     stage,
     minions,
@@ -170,6 +170,14 @@ export function buildProgress(build: Build, round: number, board: BoardMinion[],
 
 /** Golden minions carry a `_G` card id; they're the same minion for our purposes. */
 const baseCardId = (id: string) => id.replace(/_G$/, '')
+/** A minion in play: its card data's normal id where it has one, which `_G` alone misses. */
+const minionBaseId = (m: BoardMinion) => m.normalId ?? baseCardId(m.cardId)
+
+function countIds(ids: string[]) {
+  const n = new Map<string, number>()
+  for (const id of ids) n.set(id, (n.get(id) ?? 0) + 1)
+  return n
+}
 
 let poolCache: Promise<CardInfo[]> | undefined
 export function usePool() {
