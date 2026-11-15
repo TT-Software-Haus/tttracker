@@ -27,7 +27,10 @@ permissions:
 concurrency: promote-${{ github.event.pull_request.number || github.event.issue.number }}
 
 jobs:
-  promote:
+  # Not named `promote`: a job's check run shares the name space of commit
+  # statuses, and a passing job called `promote` would satisfy master's required
+  # `promote` check on the paths that exit without posting the real one.
+  version-gate:
     if: >-
       github.event_name == 'pull_request' ||
       (github.event.issue.pull_request && startsWith(github.event.comment.body, '/version'))
