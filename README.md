@@ -6,6 +6,7 @@ A Battlegrounds tracker written in TypeScript (Electron + React), with its own c
 
 - **Combat odds.** Win, tie and loss chances for every fight, plus expected damage and the chance a fight is lethal for you or the opponent. Shown in an overlay at the top of the screen. In Duos the odds are re-run when the second warband joins.
 - **Lobby overlay.** All heroes with health and armor, tavern tier, triples, teams, and your next opponent highlighted. Hover any hero to see the last board you saw them play. Locked overlays let clicks pass through to the game.
+- **Builds.** Plan a warband per tribe, staged by turn, with addon cards. Start one from HSReplay's published comps or a pasted share code. After you pick a hero, the tracker reads the lobby's tribes off the screen and offers the builds that fit. The one you follow shows in a sidebar overlay, and the minions it wants get boxed in the tavern.
 - **Minion browser.** Every minion in the tavern pool by tier, filtered to the tribes seen in your lobby.
 - **History and stats.** Placement, hero, final board and every fight (odds vs. actual result) for each game. Stats show average placement, top-half rate, placement distribution, per-hero and per-tribe results, and how accurate the simulator has been.
 
@@ -42,10 +43,14 @@ First run: open **Setup**, click **Enable logging**, then restart Hearthstone.
 | Combat simulator | `src/main/bg/sim/` |
 | Log discovery, `log.config`, tailing | `src/main/logs/` |
 | Card data (HearthstoneJSON) | `src/main/cards/cardDb.ts` |
+| Screen reading (tribe banner OCR, tavern slots) | `src/main/vision/` |
+| Builds: share codes, HSReplay comps | `src/main/buildCode.ts`, `src/main/comps.ts` |
 | Orchestration, windows, IPC | `src/main/tracker.ts`, `src/main/index.ts` |
 | UI | `src/renderer/src/` |
 | Test fixtures (anonymised real log) | `tests/fixtures/`, built with `scripts/make-fixture.ts` |
 
 Data is stored as JSON in `%APPDATA%\hearth-tracker\`.
+
+Developer docs: [`docs/`](docs/README.md).
 
 Card data and art come from [HearthstoneJSON](https://hearthstonejson.com). Not affiliated with Blizzard Entertainment.

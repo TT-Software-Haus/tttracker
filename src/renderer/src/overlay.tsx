@@ -1,21 +1,64 @@
 import { createRoot } from 'react-dom/client'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent } from 'react'
 import './styles.css'
-import { HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
-import { currentSession, useMatches, useSettings, useSnapshot } from './lib'
-import type { BgSnapshot } from '../../shared/types'
+import { CardText, HeroPortrait, LobbyList, OddsBar, ResultBadge, SessionStrip, TribeChips } from './components'
+import { TRIBES, artUrl, buildProgress, buildsByLobby, parseCardLinks, currentSession, sortedTargets, tribeLabel, useBuilds, useMatches, usePool, useSettings, useSnapshot } from './lib'
+import type { BgSnapshot, Build, CardInfo } from '../../shared/types'
 
-const kind = new URLSearchParams(location.search).get('kind') === 'lobby' ? 'lobby' : 'odds'
+const param = new URLSearchParams(location.search).get('kind')
+const kind = param === 'lobby' ? 'lobby' : param === 'build' ? 'build' : param === 'slots' ? 'slots' : 'odds'
 
 function Overlay() {
   const snap = useSnapshot()
   const [settings] = useSettings()
   const locked = settings?.overlay.locked ?? true
-  const scale = settings?.overlay.scale ?? 1
+  // Main sizes the window to the game and sends the zoom to match.
+  const [scale, setScale] = useState(1)
+  useEffect(() => window.api.onOverlayZoom(setScale), [])
+  // The highlight layer is positioned over the game by the main process and
+  // draws in game coordinates, so it gets none of the usual card chrome.
+  if (kind === 'slots') return <Highlights boxes={snap?.shopHighlights ?? []} />
   return (
-    <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale }}>
+    <div className={`overlay ${locked ? 'locked' : 'unlocked'}`} style={{ zoom: scale, ['--vh' as string]: `${1 / scale}vh` }}>
       {!locked && <div className="ov-drag">Drag to position · lock in Setup</div>}
-      {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : <LobbyOverlay snap={snap} />)}
+      {snap?.buildPrompt?.length && kind === 'odds' ? <BuildPrompt builds={snap.buildPrompt} /> : null}
+      {snap && (kind === 'odds' ? <OddsOverlay snap={snap} /> : kind === 'lobby' ? <LobbyOverlay snap={snap} /> : <BuildOverlay snap={snap} />)}
+    </div>
+  )
+}
+
+/** Boxes drawn straight onto the game, marking tavern cards the build wants. */
+function Highlights({ boxes }: { boxes: BgSnapshot['shopHighlights'] }) {
+  return (
+    <div className="hl-layer">
+      {boxes.map((b, i) => (
+        <div key={`${b.x}-${b.y}-${i}`} className={`hl-box ${b.debug ? 'hl-debug' : ''}`} style={{ left: b.x, top: b.y, width: b.width, height: b.height }} />
+      ))}
+    </div>
+  )
+}
+
+/** Offered once, right after the hero is locked in. Dismissing is a real answer. */
+function BuildPrompt({ builds }: { builds: Build[] }) {
+  return (
+    <div className="ov-card ov-enter ov-prompt">
+      <div className="ov-head">
+        <b>Going for a build?</b>
+        <button className="btn btn-sm ov-prompt-skip" onClick={() => void window.api.selectBuild(null)}>
+          Not this game
+        </button>
+      </div>
+      <div className="ov-prompt-list">
+        {builds.map((b) => (
+          <button key={b.id} className="ov-prompt-build" onClick={() => void window.api.selectBuild(b.id)}>
+            <span className="tribe" style={{ ['--tc' as string]: TRIBES[b.tribe]?.color ?? 'var(--accent)' }}>
+              {tribeLabel(b.tribe)}
+            </span>
+            <b>{b.name}</b>
+            <span className="muted small">{sortedTargets(b).at(-1)?.byTurn ?? 0} turns</span>
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
@@ -41,6 +84,190 @@ function OddsOverlay({ snap }: { snap: BgSnapshot }) {
   return snap.status === 'in-game' ? <div className="ov-card ov-card-quiet muted">Odds appear when combat starts</div> : null
 }
 
+/** What you're building towards: the current stage, ticked off against your board. */
+/**
+ * Pointer handlers that make this overlay take clicks while the pointer is
+ * inside. A locked overlay is otherwise click-through, and only mouse moves
+ * reach it. Unmounting while inside clears it too, because an element that
+ * disappears from under the pointer never gets its mouseleave.
+ */
+function useClickZone() {
+  const inside = useRef(false)
+  const set = (on: boolean) => {
+    if (inside.current === on) return
+    inside.current = on
+    zonesEntered(on ? 1 : -1)
+  }
+  useEffect(() => () => void (inside.current && zonesEntered(-1)), [])
+  return { onMouseEnter: () => set(true), onMouseLeave: () => set(false) }
+}
+
+/**
+ * Zones nest (the build sidebar's "Change" button sits inside the sidebar,
+ * itself a zone so it can scroll), so count them: leaving the button while
+ * still over the sidebar must keep the overlay taking the mouse.
+ */
+let zonesInside = 0
+function zonesEntered(delta: number) {
+  const was = zonesInside > 0
+  zonesInside = Math.max(0, zonesInside + delta)
+  if (zonesInside > 0 !== was) void window.api.setInteractive(zonesInside > 0)
+}
+
+function OvButton(props: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return <button {...props} {...useClickZone()} />
+}
+
+/**
+ * Every saved build, this lobby's tribes first. Builds are fetched when it
+ * opens, since saving one in the main window doesn't broadcast.
+ */
+function BuildPicker({ snap, onClose }: { snap: BgSnapshot; onClose: () => void }) {
+  const [builds] = useBuilds()
+  const zone = useClickZone()
+  const [relevant, rest] = buildsByLobby(builds, snap.tribes)
+  const row = (b: Build) => (
+    <button
+      key={b.id}
+      className={`ov-prompt-build ${b.id === snap.selectedBuild?.id ? 'current' : ''}`}
+      onClick={() => {
+        void window.api.selectBuild(b.id)
+        onClose()
+      }}
+    >
+      {b.tribe && (
+        <span className="tribe" style={{ ['--tc' as string]: TRIBES[b.tribe]?.color ?? 'var(--accent)' }}>
+          {tribeLabel(b.tribe)}
+        </span>
+      )}
+      <b>{b.name}</b>
+    </button>
+  )
+  return (
+    <div className="ov-card ov-prompt ov-picker" {...zone}>
+      <div className="ov-head">
+        <b>Pick a build</b>
+        <button className="btn btn-sm ov-prompt-skip" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+      <div className="ov-prompt-list">
+        {relevant.map(row)}
+        {rest.length > 0 && <div className="ov-build-sub">Other tribes</div>}
+        {rest.map(row)}
+        {!builds.length && <span className="muted small">No builds yet. Make one on the Builds page.</span>}
+      </div>
+    </div>
+  )
+}
+
+function BuildOverlay({ snap }: { snap: BgSnapshot }) {
+  const build = snap.selectedBuild
+  const pool = usePool()
+  const cards = useMemo(() => new Map(pool.map((c) => [c.id, c])), [pool])
+  const byDbf = useMemo(() => new Map(pool.map((c) => [c.dbfId, c])), [pool])
+  const [picking, setPicking] = useState(false)
+  const [tip, setTip] = useState<{ card: CardInfo; style: CSSProperties }>()
+  const zone = useClickZone()
+  // The sidebar only changes in the tavern: in combat it shows the tavern as
+  // you left it (asked for). Live combat data moved it about: the fighting
+  // board loses minions as they die, the shop empties so "in shop" flags went,
+  // and the round ticks over.
+  const tavern = useRef<Pick<BgSnapshot, 'round' | 'board' | 'hand' | 'shop'>>(undefined)
+  if (snap.phase !== 'combat') tavern.current = { round: snap.round, board: snap.board, hand: snap.hand, shop: snap.shop }
+  // Opened mid-fight (a restart), there's no tavern seen yet: the board as the
+  // fight began is the nearest thing.
+  const view = (snap.phase === 'combat' && tavern.current) || {
+    round: snap.round,
+    board: snap.combat?.myBoard.length ? snap.combat.myBoard : snap.board,
+    hand: snap.hand,
+    shop: snap.shop,
+  }
+  if (!build) return null
+  if (picking) return <BuildPicker snap={snap} onClose={() => setPicking(false)} />
+  // In hand counts as bought: it's yours, just not played yet.
+  const p = buildProgress(build, Math.max(1, view.round), [...view.board, ...view.hand], view.shop)
+  if (!p) return null
+  const done = p.have === p.minions.length
+  /**
+   * Card detail for a minion row or a card named in the description. The
+   * tooltip lives in the card (the scroll container), placed from the hovered
+   * element's layout offset rather than its screen rect, which keeps it right
+   * under the overlay's `zoom` scale. Anything in the lower half of the visible
+   * card gets it above, via a transform, since its own height isn't known yet.
+   */
+  const showTip = (e: MouseEvent<HTMLElement>, card: CardInfo | undefined) => {
+    const el = e.currentTarget
+    const box = el.closest<HTMLElement>('.ov-build')
+    if (!card || !box) return setTip(undefined)
+    const below = el.offsetTop - box.scrollTop + el.offsetHeight / 2 < box.clientHeight / 2
+    setTip({ card, style: below ? { top: el.offsetTop + el.offsetHeight + 4 } : { top: el.offsetTop - 4, transform: 'translateY(-100%)' } })
+  }
+  const row = (m: (typeof p.minions)[number], key: string) => (
+    <div key={key} className={`ov-build-minion ${m.have ? 'have' : ''} ${m.inShop ? 'in-shop' : ''}`} onMouseEnter={(e) => showTip(e, cards.get(m.cardId))} onMouseLeave={() => setTip(undefined)}>
+      <span className="ov-build-art" style={{ backgroundImage: `url(${artUrl(m.cardId)})` }} />
+      <span className="ov-build-name">{cards.get(m.cardId)?.name ?? m.cardId}</span>
+      {m.have ? <span className="ov-build-tick">✓</span> : m.inShop ? <span className="ov-build-shop">in shop</span> : null}
+    </div>
+  )
+  return (
+    // A click zone so it scrolls: a click-through window gets forwarded mouse
+    // moves but never the wheel. Over the sidebar, clicks are the sidebar's.
+    <div className="ov-card ov-build" onScroll={() => setTip(undefined)} {...zone}>
+      <div className="ov-head">
+        <b>{build.name}</b>
+        <span className="muted small">
+          {p.have}/{p.minions.length}
+        </span>
+        <OvButton className="btn btn-sm" onClick={() => setPicking(true)}>
+          Change
+        </OvButton>
+      </div>
+      <div className={`ov-build-turn ${!done && p.turnsLeft < 0 ? 'danger' : ''}`}>
+        {done ? 'Stage complete' : p.turnsLeft > 0 ? `by turn ${p.stage.byTurn} · ${p.turnsLeft} to go` : p.turnsLeft === 0 ? `by turn ${p.stage.byTurn} · this turn` : `${-p.turnsLeft} turn${p.turnsLeft === -1 ? '' : 's'} overdue`}
+      </div>
+      <div className="ov-build-list">
+        {p.minions.map((m, i) => row(m, `${m.cardId}-${i}`))}
+        {p.addons.length > 0 && (
+          <>
+            <div className="ov-build-sub">Addons</div>
+            {p.addons.map((m, i) => row(m, `a-${m.cardId}-${i}`))}
+          </>
+        )}
+      </div>
+      {build.description && (
+        <div className="ov-build-desc">
+          <div className="ov-build-sub">How to play</div>
+          <p>
+            {parseCardLinks(build.description).map((part, i) => {
+              if (part.dbfId === undefined) return <span key={i}>{part.text}</span>
+              const card = byDbf.get(part.dbfId)
+              return (
+                <b key={i} className={card ? 'ov-card-link' : undefined} onMouseEnter={(e) => showTip(e, card)} onMouseLeave={() => setTip(undefined)}>
+                  {part.text}
+                </b>
+              )
+            })}
+          </p>
+        </div>
+      )}
+      {tip && (
+        <div className="ov-tip" style={tip.style}>
+          <b>{tip.card.name}</b>
+          <div className="ov-tip-meta">
+            Tier {tip.card.techLevel ?? '?'} · {(tip.card.races ?? []).map((r) => (r === 'ALL' ? 'All' : tribeLabel(r))).join(' · ') || 'Neutral'}
+          </div>
+          {tip.card.text && (
+            <div className="ov-tip-text">
+              <CardText text={tip.card.text} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function LobbyOverlay({ snap }: { snap: BgSnapshot }) {
   // Locked overlays are click-through, but mouse movement still arrives, so
   // hovering a row shows that player's last board; otherwise the next opponent's.
@@ -48,16 +275,25 @@ function LobbyOverlay({ snap }: { snap: BgSnapshot }) {
   const matches = useMatches()
   const session = currentSession(matches)
   const next = snap.lobby.find((p) => p.isNextOpponent && !p.dead && p.lastBoard) ?? snap.lobby.find((p) => p.isNextOpponent && !p.dead)
+  const [picking, setPicking] = useState(false)
   return (
-    <div className="ov-card ov-lobby">
-      <div className="ov-head">
-        <b>Turn {Math.max(1, snap.round)}</b>
-        <span className="muted">{snap.mode === 'duos' ? 'Duos' : 'Solo'}</span>
+    <>
+      {picking && snap.buildPickable && <BuildPicker snap={snap} onClose={() => setPicking(false)} />}
+      <div className="ov-card ov-lobby">
+        <div className="ov-head">
+          <b>Turn {Math.max(1, snap.round)}</b>
+          <span className="muted">{snap.mode === 'duos' ? 'Duos' : 'Solo'}</span>
+          {snap.buildPickable && !picking && (
+            <OvButton className="btn btn-sm ov-pick-build" onClick={() => setPicking(true)}>
+              Pick a build
+            </OvButton>
+          )}
+        </div>
+        <SessionStrip s={session} compact />
+        <TribeChips tribes={snap.tribes} />
+        <LobbyList players={snap.lobby} mode={snap.mode} expandedId={hover ?? next?.playerId} onHover={setHover} />
       </div>
-      <SessionStrip s={session} compact />
-      <TribeChips tribes={snap.tribes} />
-      <LobbyList players={snap.lobby} mode={snap.mode} expandedId={hover ?? next?.playerId} onHover={setHover} />
-    </div>
+    </>
   )
 }
 
