@@ -168,7 +168,7 @@ function LivePage({ snap, matches }: { snap?: BgSnapshot; matches: BgMatch[] }) 
               'No fights yet'
             )}
           </div>
-          {c?.odds ? <OddsBar key={`fight-${c.round}`} odds={c.odds} fightKey={c.round} /> : <div className="muted">Odds appear when the first combat starts.</div>}
+          {c?.odds ? <OddsBar key={`fight-${c.round}`} odds={c.liveOdds ?? c.odds} fightKey={c.round} /> : <div className="muted">Odds appear when the first combat starts.</div>}
           {c && (
             <div className="vs">
               <div>

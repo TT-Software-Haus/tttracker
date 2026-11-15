@@ -14,6 +14,7 @@ import type { Entity, Game, GameEvent } from '../game/game'
 import type { BgMatch, BgSnapshot, BoardMinion, CombatResult, CombatRound, GameMode, LobbyPlayer, SimOdds } from '../../shared/types'
 import { simulateMany, type BoardInput, type MinionInput } from './sim/engine'
 import type { SimJob, Simulator } from './sim/remote'
+import { Superseded } from './sim/newestOnly'
 import { randomUUID } from 'node:crypto'
 
 const on = (e: Entity, tag: string) => e.tags[tag] !== undefined && e.tags[tag] !== '0'
@@ -34,6 +35,8 @@ export class BgGame {
   private combatCreated: Entity[] = []
   private warbandIds = new Set<number>()
   private duoBoards = new Map<number, Entity[]>()
+  /** Duos: each warband's hero power (dbfId), from the hero copies made before the fight. */
+  private duoHeroPowers = new Map<number, number>()
   private duoHands = new Map<number, Entity[]>()
   private enteredPids = new Set<number>()
   private resimPending = false
@@ -49,6 +52,9 @@ export class BgGame {
   simulate?: Simulator
   /** The newest sim started for each round: a resim's odds replace the first's. */
   private simFor = new WeakMap<CombatRound, number>()
+  private liveSimFor = new WeakMap<CombatRound, number>()
+  /** Minions that have died in the current fight, by controller, in order (for live odds). */
+  private deadThisFight = new Map<number, MinionInput[]>()
   private simSeq = 0
 
   /** Called after a finished game; return value is stored as history. */
@@ -132,6 +138,7 @@ export class BgGame {
     this.combatCreated = []
     this.warbandIds.clear()
     this.duoBoards.clear()
+    this.duoHeroPowers.clear()
     this.duoHands.clear()
     this.enteredPids.clear()
     this.resimPending = false
@@ -206,9 +213,16 @@ export class BgGame {
         this.warbandIds = new Set(this.minionEntities(this.game.friendlyPlayerId).map((m) => m.id))
         this.combatCreated = []
         this.duoBoards.clear()
+    this.duoHeroPowers.clear()
         this.enteredPids.clear()
       }
       return
+    }
+    // A minion dying in the fight: remembered for live odds ("your first Mech that died").
+    if (tag === 'ZONE' && value === 'GRAVEYARD' && prev === 'PLAY' && e.tags.CARDTYPE === 'MINION' && this.current && this.inCombat) {
+      const owner = this.game.controllerOf(e)
+      const dead = { ...this.toInput(e), health: Number(e.tags.HEALTH ?? 0) }
+      this.deadThisFight.set(owner, [...(this.deadThisFight.get(owner) ?? []), dead])
     }
     // Duos: a new hero (and warband) entering mid-combat.
     if (tag === 'ZONE' && value === 'PLAY' && prev !== 'PLAY' && e.tags.CARDTYPE === 'HERO' && this.current && this.inCombat) {
@@ -229,6 +243,7 @@ export class BgGame {
       // The winner's hero hits the loser's hero: combat is decided.
       const mine = this.game.controllerOf(attacker) === this.game.friendlyPlayerId
       this.current.result = mine ? 'WON' : 'LOST'
+      this.liveSimFor.delete(this.current)
       this.heroHpAtAttack = new Map([...this.game.entities.values()].filter((h) => h.tags.CARDTYPE === 'HERO').map((h) => [h.id, effectiveHealth(h)]))
       this.onChange?.()
       return
@@ -237,9 +252,34 @@ export class BgGame {
       // A teammate's warband has come in: re-run from the current position.
       this.resimPending = false
       this.captureBoards(this.current, false)
-      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true })
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true, next: this.nextAttackers(attacker) })
       this.onChange?.()
+    } else if (this.current.odds || this.simFor.has(this.current)) {
+      // Every later attack: the previous one's deaths have settled and we know who swings now.
+      // In Duos, note which warbands have come in, so one that's fighting isn't also a reserve.
+      this.captureBoards(this.current, false)
+      this.simulateInto(this.current, { firstAttacker: first, skipStartOfCombat: true, next: this.nextAttackers(attacker), live: true })
     }
+  }
+
+  /**
+   * Where each side's attacks resume, as indexes into its board: the minion attacking now, and on
+   * the other side the left-most of those that have attacked least this fight (NUM_ATTACKS_THIS_TURN).
+   * The game keeps a pointer that a minion summoned behind it doesn't jump, so a fresh token can be
+   * picked a little early.
+   */
+  private nextAttackers(attacker: Entity): { a?: number; b?: number } {
+    const me = this.game.friendlyPlayerId
+    const pick = (controller: number | undefined) => {
+      const board = this.minionEntities(controller)
+      const at = board.indexOf(attacker)
+      if (at >= 0) return at
+      const counts = board.map((e) => Number(e.tags.NUM_ATTACKS_THIS_TURN ?? 0))
+      const least = Math.min(...counts.filter((_, i) => Number(board[i].tags.ATK ?? 0) > 0))
+      const i = counts.findIndex((n, j) => n === least && Number(board[j].tags.ATK ?? 0) > 0)
+      return i >= 0 ? i : undefined
+    }
+    return { a: pick(me), b: pick(this.dummyPlayerId()) }
   }
 
   private onHeroAttackEnd() {
@@ -262,6 +302,7 @@ export class BgGame {
     this.captureBoards(round, true)
     this.current = round
     this.rounds.push(round)
+    this.deadThisFight.clear()
     this.resimPending = false
     this.simulateInto(round, { firstAttacker, skipStartOfCombat: true })
     this.onChange?.()
@@ -271,6 +312,7 @@ export class BgGame {
     const c = this.current
     if (!c) return
     if (!c.result) c.result = 'TIED'
+    c.liveOdds = undefined // the fight is over: show its opening odds again
     if (c.opponentPlayerId !== undefined) this.lastResults.set(c.opponentPlayerId, c.result)
     this.current = undefined
     this.resimPending = false
@@ -292,6 +334,7 @@ export class BgGame {
    */
   private groupDuoBoards() {
     this.duoBoards.clear()
+    this.duoHeroPowers.clear()
     this.duoHands.clear()
     const me = this.game.friendlyPlayerId!
     let cur: number | undefined
@@ -307,6 +350,7 @@ export class BgGame {
       if (e.tags.CARDTYPE === 'HERO' && e.tags.PLAYER_ID && zone === 'SETASIDE') {
         cur = Number(e.tags.PLAYER_ID)
         if (!this.duoBoards.has(cur)) this.duoBoards.set(cur, [])
+        if (e.tags.HERO_POWER) this.duoHeroPowers.set(cur, Number(e.tags.HERO_POWER))
         continue
       }
       if (e.tags.CARDTYPE !== 'MINION' || (zone !== 'SETASIDE' && zone !== 'HAND')) continue
@@ -392,7 +436,8 @@ export class BgGame {
     const pid = this.reservePid(side)
     const ents = pid === undefined ? undefined : this.duoBoards.get(pid)
     if (!ents?.length) return undefined
-    return { minions: ents.map((e) => this.toInput(e)), heroTier: Number(this.lobbyHero(pid)?.tags.PLAYER_TECH_LEVEL ?? 1), hand: this.handFor(pid) }
+    const power = this.cards.byDbfId(this.duoHeroPowers.get(pid!) ?? 0)?.id
+    return { minions: ents.map((e) => this.toInput(e)), heroTier: Number(this.lobbyHero(pid)?.tags.PLAYER_TECH_LEVEL ?? 1), hand: this.handFor(pid), heroPower: power }
   }
 
   private captureBoards(round: CombatRound, initial: boolean) {
@@ -428,7 +473,7 @@ export class BgGame {
     }
     if (pid !== undefined) this.lastBoards.set(pid, { round: round.round, minions: oppBoard })
     // Duos: remember the teammate's warband when it's the one fighting on our side.
-    if (myPid && myPid !== me) this.lastTeammateBoard.set(myPid, this.minionEntities(me).map((e) => this.toInput(e)))
+    if (myPid && myPid !== me) this.lastTeammateBoard.set(myPid, this.withEnchantIndex(() => this.minionEntities(me).map((e) => this.toInput(e))))
   }
 
   private minionEntities(controller: number | undefined): Entity[] {
@@ -509,13 +554,69 @@ export class BgGame {
     const minions = this.minionEntities(controller).map((e) => this.toInput(e))
     // Hands: yours is always visible; for others Hearthstone copies the cards a
     // fight needs (e.g. for Diremuck Forager / Flighty Scout) into the log.
-    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined) }
+    const heroPower = this.cards.byDbfId(Number(hero?.tags.HERO_POWER ?? 0))?.id
+    const input: BoardInput = { minions, heroTier: tier, hand: this.handFor(pid || undefined), heroPower, turn: this.round, trinkets: this.trinketsOf(controller) }
     if (controller === this.game.friendlyPlayerId) {
       const mate = Number(this.game.playerEntity(controller)?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0)
       const mateBoard = mate ? this.lastTeammateBoard.get(mate) : undefined
       if (mateBoard) input.teammate = mateBoard
     }
     return input
+  }
+
+  /**
+   * Card ids of the enchantments on a minion that act in combat: a Deathrattle, Rally or Start
+   * of Combat given to it (Murloc King, Earth Invocation, Leapfrogger...). They're entities
+   * ATTACHED to the minion; anything else they do is already in its stats and keywords.
+   */
+  private combatEnchantments(e: Entity): string[] | undefined {
+    return (this.enchantIndex ?? this.buildEnchantIndex()).get(e.id)
+  }
+
+  /**
+   * Combat enchantments by the minion they're attached to. One pass over every entity, so
+   * callers that convert a whole board set `enchantIndex` first (see withEnchantIndex).
+   */
+  private buildEnchantIndex(): Map<number, string[]> {
+    const index = new Map<number, string[]>()
+    for (const x of this.game.entities.values()) {
+      if (x.tags.CARDTYPE !== 'ENCHANTMENT' || !x.tags.ATTACHED) continue
+      if (x.tags.ZONE === 'GRAVEYARD' || x.tags.ZONE === 'REMOVEDFROMGAME') continue
+      if (!/Deathrattle|Rally|Start of Combat/i.test(this.cards.get(x.cardId)?.text ?? '')) continue
+      const on = Number(x.tags.ATTACHED)
+      index.set(on, [...(index.get(on) ?? []), x.cardId])
+    }
+    return index
+  }
+
+  private enchantIndex?: Map<number, string[]>
+
+  private withEnchantIndex<T>(fn: () => T): T {
+    this.enchantIndex = this.buildEnchantIndex()
+    try {
+      return fn()
+    } finally {
+      this.enchantIndex = undefined
+    }
+  }
+
+  /**
+   * The passive cards fighting with a warband: its trinkets and quest rewards (in play for its
+   * controller; checked on real logs, both sides' trinkets are there during each fight; the
+   * "Lesser/Greater Trinket" cards are the empty slots), plus the lobby's anomaly, which applies to
+   * everyone. No anomaly has been seen in a local log yet, so that part is from the card type alone.
+   */
+  private trinketsOf(controller: number | undefined): string[] | undefined {
+    if (controller === undefined) return undefined
+    const ids = [...this.game.entities.values()]
+      .filter((e) => {
+        if (e.tags.ZONE !== 'PLAY') return false
+        if (e.tags.CARDTYPE === 'BATTLEGROUND_ANOMALY') return true
+        const own = e.tags.CARDTYPE === 'BATTLEGROUND_TRINKET' || e.tags.CARDTYPE === 'BATTLEGROUND_QUEST_REWARD'
+        return own && this.game.controllerOf(e) === controller && !/^BG30_Trinket_/.test(e.cardId)
+      })
+      .map((e) => e.cardId)
+    return ids.length ? ids : undefined
   }
 
   private toInput(e: Entity): MinionInput {
@@ -534,28 +635,37 @@ export class BgGame {
       reborn: on(e, 'REBORN'),
       stealth: on(e, 'STEALTH'),
       tier: Number(t.TECH_LEVEL ?? 0) || undefined,
+      enchantments: this.combatEnchantments(e),
+      // Avenge progress: SCORE_VALUE_2 counts up on Avenge minions (seen 0-3 on an Avenge (4) in a real log).
+      avenge: this.cards.get(e.cardId)?.mechanics?.includes('AVENGE') ? Number(t.SCORE_VALUE_2 ?? 0) || undefined : undefined,
     }
   }
 
   /** Fill in the round's odds: now, or when the sim worker answers. */
-  private simulateInto(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }) {
+  private simulateInto(round: CombatRound, opts: SimAt & { live?: boolean }) {
     const job = this.simJob(round, opts)
     if (!job) return
     const { partial, ...sim } = job
+    const field = opts.live ? 'liveOdds' : 'odds'
     if (!this.simulate) {
-      round.odds = this.runSim(sim, partial)
+      round[field] = this.runSim(sim, partial)
       return
     }
+    const seqs = opts.live ? this.liveSimFor : this.simFor
     const seq = ++this.simSeq
-    this.simFor.set(round, seq)
-    this.simulate(sim).then(
+    seqs.set(round, seq)
+    this.simulate(sim, opts.live ? { lane: 'live' } : undefined).then(
       (odds) => {
-        if (this.simFor.get(round) !== seq) return // a resim replaced it
-        round.odds = partial ? { ...odds, partial: true } : odds
+        if (seqs.get(round) !== seq) return // a resim replaced it
+        // Live odds for a fight that has ended are of no use; the opening odds stay.
+        if (opts.live && (round !== this.current || this.emittedRounds.has(round))) return
+        round[field] = partial ? { ...odds, partial: true } : odds
         this.onChange?.()
         if (this.emittedRounds.has(round)) this.onMatchUpdated?.()
       },
-      (err) => console.error('Simulation failed', err),
+      (err) => {
+        if (!(err instanceof Superseded)) console.error('Simulation failed', err)
+      },
     )
   }
 
@@ -570,11 +680,34 @@ export class BgGame {
     }
   }
 
-  private simJob(round: CombatRound, opts: { firstAttacker?: 0 | 1; skipStartOfCombat?: boolean }): (SimJob & { partial: boolean }) | undefined {
+  /**
+   * The most damage one fight can do right now, if the game's cap is on. The game entity carries
+   * BACON_COMBAT_DAMAGE_CAP and _ENABLED. Seen in real logs: solo starts at 5, then 10 from turn 4
+   * and 15 from turn 8; Duos is 15 from the start; both switch it off late in the game. Over 80
+   * real fights, none did more than the cap while it was on, and 21 did exactly the cap.
+   */
+  private damageCap(): number | undefined {
+    const t = this.game.gameEntity()?.tags
+    if (t?.BACON_COMBAT_DAMAGE_CAP_ENABLED !== '1') return undefined
+    return Number(t.BACON_COMBAT_DAMAGE_CAP) || undefined
+  }
+
+  private simJob(round: CombatRound, opts: SimAt): (SimJob & { partial: boolean }) | undefined {
+    return this.withEnchantIndex(() => this.simJobInner(round, opts))
+  }
+
+  private simJobInner(round: CombatRound, opts: SimAt): (SimJob & { partial: boolean }) | undefined {
     const me = this.game.friendlyPlayerId
     const dummy = this.dummyPlayerId()
     const a = this.simInput(me)
     const b = this.simInput(dummy)
+    a.nextAttacker = opts.next?.a
+    b.nextAttacker = opts.next?.b
+    // Mid-fight, what has happened so far: deaths (for "the first Mech that died") and Avenge counts.
+    if (opts.next) {
+      a.dead = this.deadThisFight.get(me ?? -1)
+      b.dead = this.deadThisFight.get(dummy ?? -1)
+    }
     a.reserve = this.reserveInput('me')
     b.reserve = this.reserveInput('opp')
     if (!a.minions.length && !b.minions.length) return undefined
@@ -593,6 +726,7 @@ export class BgGame {
         skipStartOfCombat: opts.skipStartOfCombat,
         myHealth: myHp || undefined,
         oppHealth: oppHp || undefined,
+        damageCap: this.damageCap(),
       },
       partial: partialDuos,
     }
@@ -688,7 +822,10 @@ export class BgGame {
     const player = this.game.playerEntity(this.game.friendlyPlayerId)
     const mate = this.lobbyHero(Number(player?.tags.BACON_DUO_TEAMMATE_PLAYER_ID ?? 0) || undefined)
     const lastMine = [...this.rounds].reverse().find((r) => r.myBoard.length)
-    for (const r of this.rounds) this.emittedRounds.add(r)
+    for (const r of this.rounds) {
+      this.emittedRounds.add(r)
+      delete r.liveOdds // shown during the fight, never saved
+    }
     this.onMatchEnd({
       id: randomUUID(),
       startedAt: this.game.startedAt,
@@ -700,7 +837,15 @@ export class BgGame {
       rounds: this.round,
       finalBoard: lastMine?.myBoard ?? this.boardOf(this.game.friendlyPlayerId),
       teammateHeroCardId: mate?.cardId,
+      // The same round objects, so odds answered after the save land in it (onMatchUpdated).
       combats: this.rounds,
     })
   }
+}
+
+/** Where a sim starts from: who swings first, and mid-fight, where each side's attacks resume. */
+interface SimAt {
+  firstAttacker?: 0 | 1
+  skipStartOfCombat?: boolean
+  next?: { a?: number; b?: number }
 }
